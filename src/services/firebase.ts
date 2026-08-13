@@ -34,8 +34,20 @@ import {
   serverTimestamp,
   increment
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+import defaultConfig from '../../firebase-applet-config.json';
 import { UserProfile, UserRole, UserType } from '../types';
+
+// Construct config with environment variables override support
+const firebaseConfig = {
+  apiKey: (import.meta.env.VITE_FIREBASE_API_KEY as string) || defaultConfig.apiKey,
+  authDomain: (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string) || defaultConfig.authDomain,
+  projectId: (import.meta.env.VITE_FIREBASE_PROJECT_ID as string) || defaultConfig.projectId,
+  firestoreDatabaseId: (import.meta.env.VITE_FIREBASE_DATABASE_ID as string) || defaultConfig.firestoreDatabaseId || '(default)',
+  storageBucket: (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string) || defaultConfig.storageBucket,
+  messagingSenderId: (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string) || defaultConfig.messagingSenderId,
+  appId: (import.meta.env.VITE_FIREBASE_APP_ID as string) || defaultConfig.appId,
+  measurementId: (import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string) || defaultConfig.measurementId || '',
+};
 
 // Initialize Firebase App
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
@@ -44,7 +56,7 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
 // Initialize Firestore with specific databaseId from config
-export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId || '(default)');
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
 
 // Enable offline persistence to handle transient connection issues smoothly
 if (typeof window !== 'undefined') {
