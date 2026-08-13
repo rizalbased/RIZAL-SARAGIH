@@ -1,0 +1,126 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is owner
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isSignedIn() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SUPER_ADMIN'
+      );
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+
+      // Subcollection: following
+      match /following/{targetUid} {
+        allow read: if true;
+        allow write: if isSignedIn();
+      }
+
+      // Subcollection: followers
+      match /followers/{followerUid} {
+        allow read: if true;
+        allow write: if isSignedIn();
+      }
+
+      // Subcollection: followRequests
+      match /followRequests/{requestId} {
+        allow read, write: if isSignedIn();
+      }
+
+      // Subcollection: notifications
+      match /notifications/{notifId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+
+    // Follow Requests Top-level collection
+    match /followRequests/{requestId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Relationships Top-level collection
+    match /relationships/{relId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Posts Collection
+    match /posts/{postId} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn() && (
+        resource.data.authorId == request.auth.uid || isAdmin()
+      );
+
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if isSignedIn();
+        allow update, delete: if isSignedIn() && (
+          resource.data.authorId == request.auth.uid || isAdmin()
+        );
+      }
+    }
+
+    // Stories Collection
+    match /stories/{storyId} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn() && (
+        resource.data.authorId == request.auth.uid || isAdmin()
+      );
+    }
+
+    // News Collection
+    match /news/{newsId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Notifications Top-level collection
+    match /notifications/{notifId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Conversations & Messages
+    match /conversations/{convId} {
+      allow read, write: if isSignedIn();
+      match /messages/{msgId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+
+    // Reports Collection
+    match /reports/{reportId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Radio Requests Collection
+    match /radioRequests/{reqId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // Documentations Collection
+    match /documentations/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,156 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Inter', sans-serif;
+    background-color: #F7F7F0;
+    color: #0B0B0B;
+  }
+  
+  h1, h2, h3, h4, h5, h6, button, nav {
+    font-family: 'Space Grotesk', 'Poppins', sans-serif;
+  }
+  
+  .font-heading {
+    font-family: 'Space Grotesk', 'Poppins', sans-serif;
+  }
+
+  .font-body {
+    font-family: 'Inter', sans-serif;
+  }
+
+  .font-display {
+    font-family: 'Space Grotesk', sans-serif;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #000000;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #333333;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Neobrutalism Utility Helpers */
+.neo-card {
+  background-color: #ffffff;
+  border: 2.5px solid #000000;
+  border-radius: 1.25rem;
+  box-shadow: 4px 4px 0px 0px #000000;
+}
+
+.neo-card-sm {
+  background-color: #ffffff;
+  border: 2px solid #000000;
+  border-radius: 1rem;
+  box-shadow: 3px 3px 0px 0px #000000;
+}
+
+.neo-btn {
+  background-color: #B8FF00;
+  color: #000000;
+  font-weight: 800;
+  border: 2.5px solid #000000;
+  border-radius: 0.85rem;
+  box-shadow: 3px 3px 0px 0px #000000;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+}
+.neo-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 5px 0px 0px #000000;
+}
+.neo-btn:active {
+  transform: translate(1px, 1px);
+  box-shadow: 2px 2px 0px 0px #000000;
+}
+
+.neo-btn-pink {
+  background-color: #FF4F8B;
+  color: #ffffff;
+  font-weight: 800;
+  border: 2.5px solid #000000;
+  border-radius: 0.85rem;
+  box-shadow: 3px 3px 0px 0px #000000;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+}
+.neo-btn-pink:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 5px 0px 0px #000000;
+}
+.neo-btn-pink:active {
+  transform: translate(1px, 1px);
+  box-shadow: 2px 2px 0px 0px #000000;
+}
+
+.neo-btn-cyan {
+  background-color: #35B9FF;
+  color: #000000;
+  font-weight: 800;
+  border: 2.5px solid #000000;
+  border-radius: 0.85rem;
+  box-shadow: 3px 3px 0px 0px #000000;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+}
+.neo-btn-cyan:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 5px 0px 0px #000000;
+}
+.neo-btn-cyan:active {
+  transform: translate(1px, 1px);
+  box-shadow: 2px 2px 0px 0px #000000;
+}
+
+.neo-badge {
+  border: 2px solid #000000;
+  box-shadow: 2px 2px 0px 0px #000000;
+  font-weight: 800;
+}
+
+.neo-input {
+  border: 2.5px solid #000000;
+  border-radius: 0.85rem;
+  box-shadow: 3px 3px 0px 0px #000000;
+  outline: none;
+  transition: all 0.15s ease-in-out;
+}
+.neo-input:focus {
+  box-shadow: 4px 4px 0px 0px #000000;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 3px 3px 0px 0px #000000;
+  }
+  50% {
+    box-shadow: 5px 5px 0px 0px #000000;
+  }
+}
+
+.animate-glow {
+  animation: pulse-glow 2s infinite;
+}
+
+
