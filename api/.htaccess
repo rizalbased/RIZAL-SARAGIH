@@ -1,0 +1,30 @@
+# ==============================================================================
+# MKVERSE Backend API - Apache Configuration (.htaccess)
+# ==============================================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # If the requested file or directory exists, serve it directly
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Rewrite extensionless URLs to .php files
+    # Example: /api/users/register -> /api/users/register.php
+    RewriteCond %{DOCUMENT_ROOT}/$1.php -f
+    RewriteRule ^(.*)$ $1.php [L,QSA]
+
+    RewriteCond %{REQUEST_FILENAME}.php -f
+    RewriteRule ^(.*)$ $1.php [L,QSA]
+</IfModule>
+
+# Set PHP error logging (Disable displaying errors in production for security)
+<IfModule mod_php7.c>
+    php_flag display_errors Off
+    php_flag log_errors On
+</IfModule>
+<IfModule mod_php.c>
+    php_flag display_errors Off
+    php_flag log_errors On
+</IfModule>
