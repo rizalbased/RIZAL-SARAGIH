@@ -396,7 +396,7 @@ export async function fetchApi<T = any>(endpoint: string, options: RequestInit =
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
 
     const response = await fetch(`${API_URL}${cleanEndpoint}`, {
       ...options,
@@ -409,7 +409,7 @@ export async function fetchApi<T = any>(endpoint: string, options: RequestInit =
     if (!response.ok) {
       return {
         success: false,
-        message: data.message || 'Terjadi kesalahan pada server.',
+        message: data.message || `Server error (${response.status}): ${response.statusText}`,
         code: data.code,
         needsVerification: data.needsVerification,
         isSuspended: data.isSuspended,
@@ -422,8 +422,11 @@ export async function fetchApi<T = any>(endpoint: string, options: RequestInit =
       success: true,
       ...data,
     };
-  } catch {
-    // Graceful fallback to local mock storage on network/server unreachability
+  } catch (err: any) {
+    if (import.meta.env.DEV && window?.localStorage?.getItem('DEBUG_API') === '1') {
+      console.warn(`[API Info] Endpoint ${cleanEndpoint} dialihkan ke penyimpanan lokal/simulasi:`, err?.message || err);
+    }
+    // Graceful fallback to local mock storage on network/server unreachability or sandbox
     return handleLocalMockRequest<T>(cleanEndpoint, options);
   }
 }

@@ -454,11 +454,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const loginGoogle = async (rememberMe: boolean = true) => {
     try {
+      console.log('[MKVERSE Google Auth] Memulai otentikasi Google Identity Services...');
       const credential = await requestGoogleCredential();
+      console.log('[MKVERSE Google Auth] Kredensial Google berhasil diperoleh. Mengirim ke backend PHP...');
+      
       const res = await fetchApi('/api/auth/google.php', {
         method: 'POST',
         body: JSON.stringify({ credential, rememberMe })
       });
+
+      console.log('[MKVERSE Google Auth] Respon API Backend:', res.success ? 'BERHASIL' : 'GAGAL', res.message);
 
       if (res.success && res.token && res.user) {
         setAuthToken(res.token);
@@ -473,7 +478,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return res;
     } catch (err: any) {
-      console.error('Google Sign In error:', err);
+      console.error('[MKVERSE Google Auth Error]:', err?.message || err);
       return {
         success: false,
         message: err?.message || 'Gagal masuk dengan Google.'
