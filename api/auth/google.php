@@ -11,9 +11,22 @@ require_once __DIR__ . '/../config/security.php';
 
 header('Content-Type: application/json');
 
+// Handle GET request for debugging endpoint status
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    http_response_code(200);
+    echo json_encode([
+        'success' => false,
+        'message' => 'POST request required'
+    ]);
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
-    echo json_encode(['success' => false, 'message' => 'Method Not Allowed']);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Method Not Allowed'
+    ]);
     exit;
 }
 
@@ -26,7 +39,7 @@ if (empty($credential)) {
     echo json_encode([
         'success' => false,
         'code' => 'MISSING_CREDENTIAL',
-        'message' => 'Kredensial token Google tidak ditemukan pada permintaan. Silakan coba login kembali.'
+        'message' => 'Google credential tidak diterima.'
     ]);
     exit;
 }
@@ -36,11 +49,11 @@ $expectedClientId = getenv('VITE_GOOGLE_CLIENT_ID') ?: getenv('GOOGLE_CLIENT_ID'
 $googlePayload = null;
 $verificationError = null;
 
-// Determine if the token is a JWT (ID Token, has 3 parts) or an OAuth2 Access Token
+// Determine if the token is a JWT (ID Token, 3 parts) or OAuth2 Access Token
 $isJwt = count(explode('.', $credential)) === 3;
 
 if ($isJwt) {
-    // 1A. Verify Google ID Token using Google tokeninfo API
+    // 1A. Verify Google ID Token using Google's tokeninfo API
     $tokenInfoUrl = 'https://oauth2.googleapis.com/tokeninfo?id_token=' . urlencode($credential);
 
     $ch = curl_init();
@@ -59,23 +72,22 @@ if ($isJwt) {
         $errorData = json_decode($response ?? '', true);
         $errorDesc = $errorData['error_description'] ?? $errorData['error'] ?? $curlErr ?? 'Tokeninfo check failed';
         
-        // Fallback: If cURL failed due to network restriction in simulated dev environment, inspect decoded payload
+        // Fallback for simulated dev tokens
         $parts = explode('.', $credential);
         if (count($parts) === 3) {
             $payloadJson = base64_decode(str_pad(strtr($parts[1], '-_', '+/'), strlen($parts[1]) % 4, '=', STR_PAD_RIGHT));
             $decoded = json_decode($payloadJson, true);
             if ($decoded && !empty($decoded['sub']) && !empty($decoded['email'])) {
-                // If it's a simulated dev token or standard payload
                 $googlePayload = $decoded;
             } else {
-                $verificationError = 'Verifikasi Google ID Token gagal: ' . $errorDesc;
+                $verificationError = 'Google token verification failed: ' . $errorDesc;
             }
         } else {
-            $verificationError = 'Verifikasi Google ID Token gagal: ' . $errorDesc;
+            $verificationError = 'Google token verification failed: ' . $errorDesc;
         }
     }
 } else {
-    // 1B. Verify OAuth2 Access Token via Google userinfo API
+    // 1B. Verify OAuth2 Access Token via Google's userinfo API
     $userInfoUrl = 'https://www.googleapis.com/oauth2/v3/userinfo';
 
     $ch = curl_init();
@@ -94,7 +106,7 @@ if ($isJwt) {
     } else {
         $errorData = json_decode($response ?? '', true);
         $errorDesc = $errorData['error_description'] ?? $errorData['error'] ?? $curlErr ?? 'Userinfo check failed';
-        $verificationError = 'Verifikasi Google Access Token gagal: ' . $errorDesc;
+        $verificationError = 'Google token verification failed: ' . $errorDesc;
     }
 }
 
@@ -103,7 +115,7 @@ if (!$googlePayload || empty($googlePayload['sub']) || empty($googlePayload['ema
     echo json_encode([
         'success' => false,
         'code' => 'INVALID_GOOGLE_TOKEN',
-        'message' => $verificationError ?: 'Token Google tidak valid atau profil pengguna tidak dapat diverifikasi oleh Google.'
+        'message' => $verificationError ?: 'Google token verification failed.'
     ]);
     exit;
 }
@@ -114,18 +126,9 @@ if (!empty($googlePayload['exp']) && (int)$googlePayload['exp'] < (time() - 30))
     echo json_encode([
         'success' => false,
         'code' => 'TOKEN_EXPIRED',
-        'message' => 'Sesi Google ID Token telah kedaluwarsa. Silakan lakukan proses login ulang.'
+        'message' => 'Token Google telah kedaluwarsa. Silakan login kembali.'
     ]);
     exit;
-}
-
-// 3. Validate Audience / Client ID if configured in environment
-if (!empty($expectedClientId)) {
-    $tokenAudience = $googlePayload['aud'] ?? $googlePayload['azp'] ?? '';
-    if (!empty($tokenAudience) && $tokenAudience !== $expectedClientId && strpos($tokenAudience, 'apps.googleusercontent.com') !== false) {
-        // Log mismatch for troubleshooting
-        error_log("[Google Auth] Client ID mismatch: expected {$expectedClientId}, received {$tokenAudience}");
-    }
 }
 
 $googleId = trim($googlePayload['sub']);
@@ -134,7 +137,7 @@ $name = trim($googlePayload['name'] ?? explode('@', $email)[0]);
 $picture = $googlePayload['picture'] ?? ('https://api.dicebear.com/7.x/bottts/svg?seed=' . urlencode($email));
 
 try {
-    // 4. Check if user exists by google_id in MySQL
+    // 3. Search MySQL user by google_id
     $stmt = $pdo->prepare("
         SELECT id, full_name, display_name, username, email, password_hash,
                membership_status, user_type, class_name, kelas, major, jurusan,
@@ -148,7 +151,6 @@ try {
     $user = $stmt->fetch();
 
     if ($user) {
-        // Check if account is suspended
         if (isset($user['status']) && $user['status'] === 'Suspended') {
             http_response_code(403);
             echo json_encode([
@@ -160,7 +162,7 @@ try {
             exit;
         }
 
-        // Update login timestamp & ensure email is verified
+        // Update login timestamp & set email_verified
         $updateLogin = $pdo->prepare("UPDATE users SET last_login = NOW(), email_verified = 1 WHERE id = ?");
         $updateLogin->execute([$user['id']]);
 
@@ -176,7 +178,7 @@ try {
 
         echo json_encode([
             'success' => true,
-            'message' => 'Login dengan Google berhasil. Selamat datang kembali di MKVERSE!',
+            'message' => 'Login Google berhasil.',
             'token' => $jwtToken,
             'needsUsernameSetup' => $needsUsernameSetup,
             'user' => [
@@ -212,7 +214,7 @@ try {
         exit;
     }
 
-    // 5. Check if user exists by email (Account Linking)
+    // 4. Search MySQL user by email (Account Linking)
     $stmt = $pdo->prepare("
         SELECT id, full_name, display_name, username, email, password_hash,
                membership_status, user_type, class_name, kelas, major, jurusan,
@@ -237,7 +239,7 @@ try {
             exit;
         }
 
-        // Link existing account with Google ID
+        // Link existing account with google_id
         $linkStmt = $pdo->prepare("
             UPDATE users 
             SET google_id = ?, 
@@ -260,7 +262,7 @@ try {
 
         echo json_encode([
             'success' => true,
-            'message' => 'Akun MKVERSE Anda berhasil ditautkan dengan akun Google!',
+            'message' => 'Akun MKVERSE berhasil ditautkan dengan Google.',
             'token' => $jwtToken,
             'needsUsernameSetup' => false,
             'user' => [
@@ -293,10 +295,9 @@ try {
         exit;
     }
 
-    // 6. Create new user in MySQL
+    // 5. Create new user in MySQL
     $userId = 'usr_' . time() . '_' . substr(bin2hex(random_bytes(4)), 0, 6);
 
-    // Generate unique initial username
     $rawBaseUsername = preg_replace('/[^a-z0-9_]/', '', strtolower(explode('@', $email)[0]));
     if (empty($rawBaseUsername) || strlen($rawBaseUsername) < 3) {
         $rawBaseUsername = 'mk_' . substr(bin2hex(random_bytes(3)), 0, 6);
@@ -349,7 +350,7 @@ try {
 
     echo json_encode([
         'success' => true,
-        'message' => 'Pendaftaran akun dengan Google berhasil! Silakan atur username profil Anda.',
+        'message' => 'Pendaftaran akun dengan Google berhasil.',
         'token' => $jwtToken,
         'needsUsernameSetup' => true,
         'user' => [
