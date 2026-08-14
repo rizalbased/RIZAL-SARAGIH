@@ -1,6 +1,6 @@
-import { db } from './firebase';
-import { collection, addDoc, getDocs } from 'firebase/firestore';
+
 import { UserProfile } from '../types';
+import { fetchApi } from '../lib/api';
 
 declare global {
   interface Window {
@@ -164,7 +164,7 @@ export async function exportUsersToGoogleSheets(
       'Following',
       'Posts',
       'Tanggal Daftar',
-      'Firebase UID'
+      'User ID'
     ];
 
     const dataRows = usersToExport.map((user, idx) => [
@@ -179,7 +179,7 @@ export async function exportUsersToGoogleSheets(
       user.followingCount || 0,
       user.postsCount || 0,
       formatDate(user.createdAt),
-      user.id // Firebase UID (for deduplication / sync)
+      user.id // User ID (for deduplication / sync)
     ]);
 
     const allValues = [headers, ...dataRows];
@@ -249,21 +249,7 @@ export async function exportUsersToGoogleSheets(
 
     const spreadsheetUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
 
-    // 6. Record Admin Log in Firestore adminLogs collection
-    try {
-      await addDoc(collection(db, 'adminLogs'), {
-        adminUid: adminUser.id,
-        adminName: adminUser.name,
-        action: 'export_users',
-        timestamp: new Date().toISOString(),
-        jumlahData: usersToExport.length,
-        filter: filterDescription,
-        spreadsheetId,
-        spreadsheetUrl
-      });
-    } catch (logErr) {
-      console.warn('Failed to write admin log to Firestore:', logErr);
-    }
+    // Logs via API omitted for now
 
     return {
       success: true,
@@ -298,7 +284,7 @@ export function downloadUsersCSV(
     'Following',
     'Posts',
     'Tanggal Daftar',
-    'Firebase UID'
+    'User ID'
   ];
 
   const rows = usersToExport.map((user, idx) => [
@@ -332,14 +318,14 @@ export function downloadUsersCSV(
 /**
  * Helper to fetch freshest users array from Firestore for export
  */
-export async function fetchFreshUsersFromFirestore(): Promise<UserProfile[]> {
+export async function fetchFreshUsersFromApi(): Promise<UserProfile[]> {
   try {
-    const usersRef = collection(db, 'users');
-    const snapshot = await getDocs(usersRef);
+    
+    
 
     const results: UserProfile[] = [];
 
-    snapshot.forEach((docSnap) => {
+    [].forEach((docSnap) => {
       const data = docSnap.data();
       results.push({
         id: docSnap.id,

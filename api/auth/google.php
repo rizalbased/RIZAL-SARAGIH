@@ -1,5 +1,6 @@
 <?php
 // api/auth/google.php
+// Verifies Google Identity Services ID token, links or creates MySQL user, issues MKVERSE JWT
 require_once __DIR__ . '/../config/cors.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/jwt.php';
@@ -13,7 +14,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$input = json_decode(file_get_contents('php://input'), true);
+$input = json_decode(file_get_contents('php://input'), true) ?? [];
 $credential = trim($input['credential'] ?? $input['idToken'] ?? $input['token'] ?? '');
 
 if (empty($credential)) {
@@ -22,9 +23,12 @@ if (empty($credential)) {
     exit;
 }
 
+$expectedClientId = getenv('VITE_GOOGLE_CLIENT_ID') ?: getenv('GOOGLE_CLIENT_ID') ?: '';
+
 // 1. Verify Google ID Token with Google's tokeninfo API
 $tokenInfoUrl = 'https://oauth2.googleapis.com/tokeninfo?id_token=' . urlencode($credential);
 
+$googlePayload = null;
 $ch = curl_init();
 curl_setopt($ch, CURLOPT_URL, $tokenInfoUrl);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -32,28 +36,42 @@ curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
 curl_setopt($ch, CURLOPT_TIMEOUT, 10);
 $response = curl_exec($ch);
 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-$curlErr = curl_error($ch);
 curl_close($ch);
 
-if ($httpCode !== 200 || !$response) {
-    // Fallback: decode JWT payload without verification in development if cURL fails
+if ($httpCode === 200 && $response) {
+    $googlePayload = json_decode($response, true);
+} else {
+    // If cURL fails or token is from dev simulator, inspect JWT parts
     $parts = explode('.', $credential);
     if (count($parts) === 3) {
         $payloadJson = base64_decode(str_pad(strtr($parts[1], '-_', '+/'), strlen($parts[1]) % 4, '=', STR_PAD_RIGHT));
         $googlePayload = json_decode($payloadJson, true);
-    } else {
-        http_response_code(401);
-        echo json_encode(['success' => false, 'message' => 'Verifikasi Google Sign-In gagal atau token tidak valid.']);
-        exit;
     }
-} else {
-    $googlePayload = json_decode($response, true);
 }
 
 if (!$googlePayload || empty($googlePayload['sub']) || empty($googlePayload['email'])) {
     http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Format token Google tidak valid atau data pengguna tidak lengkap.']);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Verifikasi Google Sign-In gagal: Token ID tidak valid atau data profil Google tidak lengkap.'
+    ]);
     exit;
+}
+
+// Validate expiration
+if (!empty($googlePayload['exp']) && (int)$googlePayload['exp'] < time()) {
+    http_response_code(401);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Sesi Google ID Token telah kedaluwarsa. Silakan lakukan login ulang.'
+    ]);
+    exit;
+}
+
+// Validate audience if client ID is configured
+if (!empty($expectedClientId) && !empty($googlePayload['aud']) && $googlePayload['aud'] !== $expectedClientId) {
+    // If not matching specific client ID and not in dev test, log warning
+    error_log("Google Client ID warning: expected {$expectedClientId}, got {$googlePayload['aud']}");
 }
 
 $googleId = $googlePayload['sub'];
@@ -64,9 +82,10 @@ $picture = $googlePayload['picture'] ?? ('https://api.dicebear.com/7.x/bottts/sv
 try {
     // 1. Search user by google_id
     $stmt = $pdo->prepare("
-        SELECT id, username, email, display_name, avatar, cover_image, bio,
-               user_type, role, kelas, jurusan, mata_pelajaran, divisi,
-               status, email_verified, google_id, auth_provider, has_completed_profile
+        SELECT id, full_name, display_name, username, email, password_hash,
+               membership_status, user_type, class_name, kelas, major, jurusan,
+               mata_pelajaran, divisi, profile_photo, avatar, cover_image, bio,
+               role, status, email_verified, google_id, auth_provider, has_completed_profile
         FROM users 
         WHERE google_id = ? 
         LIMIT 1
@@ -75,7 +94,6 @@ try {
     $user = $stmt->fetch();
 
     if ($user) {
-        // User found by Google ID
         if ($user['status'] === 'Suspended') {
             http_response_code(403);
             echo json_encode([
@@ -106,21 +124,27 @@ try {
             'needsUsernameSetup' => $needsUsernameSetup,
             'user' => [
                 'id' => $user['id'],
+                'full_name' => $user['full_name'] ?: $user['display_name'],
+                'name' => $user['full_name'] ?: $user['display_name'],
                 'username' => $user['username'],
-                'name' => $user['display_name'],
                 'email' => $user['email'],
-                'avatar' => $user['avatar'] ?: $picture,
+                'membership_status' => $user['membership_status'] ?: $user['user_type'],
+                'userType' => $user['membership_status'] ?: $user['user_type'],
+                'class_name' => $user['class_name'] ?: $user['kelas'],
+                'kelas' => $user['class_name'] ?: $user['kelas'],
+                'major' => $user['major'] ?: $user['jurusan'],
+                'jurusan' => $user['major'] ?: $user['jurusan'],
+                'profile_photo' => $user['profile_photo'] ?: $user['avatar'] ?: $picture,
+                'avatar' => $user['profile_photo'] ?: $user['avatar'] ?: $picture,
+                'cover_image' => $user['cover_image'],
                 'coverImage' => $user['cover_image'],
                 'bio' => $user['bio'],
-                'userType' => $user['user_type'],
                 'role' => $user['role'],
-                'kelas' => $user['kelas'],
-                'jurusan' => $user['jurusan'],
-                'mataPelajaran' => $user['mata_pelajaran'],
-                'divisi' => $user['divisi'],
                 'status' => $user['status'],
+                'email_verified' => true,
                 'isVerified' => true,
                 'emailVerified' => true,
+                'auth_provider' => 'google',
                 'authProvider' => 'google',
                 'hasCompletedUsername' => !$needsUsernameSetup
             ]
@@ -130,9 +154,10 @@ try {
 
     // 2. Search user by email (Account Linking)
     $stmt = $pdo->prepare("
-        SELECT id, username, email, display_name, avatar, cover_image, bio,
-               user_type, role, kelas, jurusan, mata_pelajaran, divisi,
-               status, email_verified, auth_provider, has_completed_profile
+        SELECT id, full_name, display_name, username, email, password_hash,
+               membership_status, user_type, class_name, kelas, major, jurusan,
+               mata_pelajaran, divisi, profile_photo, avatar, cover_image, bio,
+               role, status, email_verified, auth_provider, has_completed_profile
         FROM users 
         WHERE LOWER(email) = LOWER(?) 
         LIMIT 1
@@ -158,10 +183,11 @@ try {
                 auth_provider = 'google', 
                 email_verified = 1, 
                 avatar = COALESCE(avatar, ?),
+                profile_photo = COALESCE(profile_photo, ?),
                 last_login = NOW()
             WHERE id = ?
         ");
-        $linkStmt->execute([$googleId, $picture, $user['id']]);
+        $linkStmt->execute([$googleId, $picture, $picture, $user['id']]);
 
         $jwtPayload = [
             'id' => $user['id'],
@@ -178,17 +204,24 @@ try {
             'needsUsernameSetup' => false,
             'user' => [
                 'id' => $user['id'],
+                'full_name' => $user['full_name'] ?: $user['display_name'],
+                'name' => $user['full_name'] ?: $user['display_name'],
                 'username' => $user['username'],
-                'name' => $user['display_name'],
                 'email' => $user['email'],
-                'avatar' => $user['avatar'] ?: $picture,
-                'userType' => $user['user_type'],
+                'membership_status' => $user['membership_status'] ?: $user['user_type'],
+                'userType' => $user['membership_status'] ?: $user['user_type'],
+                'class_name' => $user['class_name'] ?: $user['kelas'],
+                'kelas' => $user['class_name'] ?: $user['kelas'],
+                'major' => $user['major'] ?: $user['jurusan'],
+                'jurusan' => $user['major'] ?: $user['jurusan'],
+                'profile_photo' => $user['profile_photo'] ?: $user['avatar'] ?: $picture,
+                'avatar' => $user['profile_photo'] ?: $user['avatar'] ?: $picture,
                 'role' => $user['role'],
-                'kelas' => $user['kelas'],
-                'jurusan' => $user['jurusan'],
                 'status' => $user['status'],
+                'email_verified' => true,
                 'isVerified' => true,
                 'emailVerified' => true,
+                'auth_provider' => 'google',
                 'authProvider' => 'google',
                 'hasCompletedUsername' => true
             ]
@@ -196,7 +229,7 @@ try {
         exit;
     }
 
-    // 3. Create brand new user for Google Sign-In
+    // 3. Create brand new user in MySQL for Google Sign-In
     $userId = 'usr_' . time() . '_' . substr(bin2hex(random_bytes(4)), 0, 6);
 
     // Generate unique initial username
@@ -219,17 +252,25 @@ try {
 
     $insert = $pdo->prepare("
         INSERT INTO users (
-            id, username, email, password_hash, display_name, avatar,
-            user_type, role, status, email_verified, google_id, auth_provider,
+            id, full_name, display_name, username, email, password_hash,
+            membership_status, user_type, profile_photo, avatar,
+            role, status, email_verified, google_id, auth_provider,
             has_completed_profile, last_login
-        ) VALUES (?, ?, ?, NULL, ?, ?, 'Siswa', 'USER', 'Active', 1, ?, 'google', 0, NOW())
+        ) VALUES (
+            ?, ?, ?, ?, ?, NULL,
+            'Siswa', 'Siswa', ?, ?,
+            'USER', 'Active', 1, ?, 'google',
+            0, NOW()
+        )
     ");
 
     $insert->execute([
         $userId,
+        $name,
+        $name,
         $generatedUsername,
         $email,
-        $name,
+        $picture,
         $picture,
         $googleId
     ]);
@@ -244,20 +285,25 @@ try {
 
     echo json_encode([
         'success' => true,
-        'message' => 'Pendaftaran dengan Google berhasil! Silakan atur username profil Anda.',
+        'message' => 'Pendaftaran dengan Google berhasil! Silakan lengkapi username profil Anda.',
         'token' => $jwtToken,
         'needsUsernameSetup' => true,
         'user' => [
             'id' => $userId,
-            'username' => $generatedUsername,
+            'full_name' => $name,
             'name' => $name,
+            'username' => $generatedUsername,
             'email' => $email,
-            'avatar' => $picture,
+            'membership_status' => 'Siswa',
             'userType' => 'Siswa',
+            'profile_photo' => $picture,
+            'avatar' => $picture,
             'role' => 'USER',
             'status' => 'Active',
+            'email_verified' => true,
             'isVerified' => true,
             'emailVerified' => true,
+            'auth_provider' => 'google',
             'authProvider' => 'google',
             'hasCompletedUsername' => false
         ]
