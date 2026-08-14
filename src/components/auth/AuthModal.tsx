@@ -225,11 +225,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onNavigat
 
   const handleGoogleLogin = async () => {
     setIsLoading(true);
+    setErrorMessage('');
     const res = await loginGoogle(rememberMe);
     setIsLoading(false);
 
     if (res.success) {
       onClose();
+    } else if ((res as any).cancelled) {
+      // User deliberately dismissed or cancelled the Google popup — reset cleanly
+      setErrorMessage('');
     } else {
       setErrorMessage(res.message || 'Gagal masuk dengan Google.');
     }

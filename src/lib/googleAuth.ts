@@ -142,6 +142,15 @@ export async function renderGoogleButton(
   }
 }
 
+export class GoogleAuthCancelledError extends Error {
+  isCancelled: boolean = true;
+  constructor(message: string = 'User membatalkan Google Login.') {
+    super(message);
+    this.name = 'GoogleAuthCancelledError';
+    this.isCancelled = true;
+  }
+}
+
 /**
  * Request Google Credential or Token using official Google Identity Services.
  * Accurately reports error root causes without false "user cancelled" messages.
@@ -174,7 +183,18 @@ export async function requestGoogleCredential(): Promise<string> {
     const handleFailure = (err: Error) => {
       if (!resolved) {
         resolved = true;
-        console.error('[Google Auth Error]:', err.message);
+        const isCancel = 
+          (err as any).isCancelled || 
+          err.name === 'GoogleAuthCancelledError' || 
+          err.message.toLowerCase().includes('membatalkan') ||
+          err.message.toLowerCase().includes('closed') ||
+          err.message.toLowerCase().includes('cancel');
+
+        if (isCancel) {
+          console.log('[Google Auth Info]: Login dibatalkan oleh pengguna.');
+        } else {
+          console.error('[Google Auth Error]:', err.message);
+        }
         reject(err);
       }
     };
@@ -207,9 +227,9 @@ export async function requestGoogleCredential(): Promise<string> {
             } else if (tokenResponse && tokenResponse.error) {
               const errCode = tokenResponse.error;
               if (errCode === 'access_denied') {
-                handleFailure(new Error('User membatalkan Google Login.'));
+                handleFailure(new GoogleAuthCancelledError('User membatalkan Google Login.'));
               } else if (errCode === 'popup_closed_by_user') {
-                handleFailure(new Error('User membatalkan Google Login (jendela popup ditutup).'));
+                handleFailure(new GoogleAuthCancelledError('User membatalkan Google Login (jendela popup ditutup).'));
               } else if (errCode === 'popup_blocked_by_browser') {
                 handleFailure(new Error('Jendela popup Google diblokir oleh browser. Harap izinkan popup untuk https://app.mkverse.my.id.'));
               } else {
@@ -221,7 +241,7 @@ export async function requestGoogleCredential(): Promise<string> {
           },
           error_callback: (err: any) => {
             if (err?.type === 'popup_closed') {
-              handleFailure(new Error('User membatalkan Google Login.'));
+              handleFailure(new GoogleAuthCancelledError('User membatalkan Google Login.'));
             } else if (err?.type === 'popup_blocked') {
               handleFailure(new Error('Jendela popup Google diblokir oleh browser. Harap izinkan popup untuk situs ini.'));
             } else {
@@ -246,12 +266,12 @@ export async function requestGoogleCredential(): Promise<string> {
           } else if (notification.isSkippedMoment && notification.isSkippedMoment()) {
             const reason = typeof notification.getSkippedReason === 'function' ? notification.getSkippedReason() : 'unknown';
             if (reason === 'user_cancel') {
-              handleFailure(new Error('User membatalkan Google Login.'));
+              handleFailure(new GoogleAuthCancelledError('User membatalkan Google Login.'));
             }
           } else if (notification.isDismissedMoment && notification.isDismissedMoment()) {
             const reason = typeof notification.getDismissedReason === 'function' ? notification.getDismissedReason() : 'unknown';
             if (reason === 'cancel') {
-              handleFailure(new Error('User membatalkan Google Login.'));
+              handleFailure(new GoogleAuthCancelledError('User membatalkan Google Login.'));
             }
           }
         });

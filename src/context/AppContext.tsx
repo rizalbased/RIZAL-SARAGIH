@@ -499,6 +499,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const credential = await requestGoogleCredential();
       return await loginGoogleWithCredential(credential, rememberMe);
     } catch (err: any) {
+      const isCancelled =
+        err?.isCancelled ||
+        err?.name === 'GoogleAuthCancelledError' ||
+        (typeof err?.message === 'string' && (
+          err.message.toLowerCase().includes('membatalkan') ||
+          err.message.toLowerCase().includes('closed') ||
+          err.message.toLowerCase().includes('cancel')
+        ));
+
+      if (isCancelled) {
+        console.log('[MKVERSE Google Auth Info] Login dibatalkan oleh pengguna.');
+        return {
+          success: false,
+          cancelled: true,
+          message: 'Login Google dibatalkan.'
+        };
+      }
+
       console.error('[MKVERSE Google Auth Error]:', err?.message || err);
       return {
         success: false,
