@@ -41,6 +41,7 @@ export async function getGoogleAccessToken(): Promise<string> {
 
     try {
       const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '562876324627-vbmn5a7grtcvak1remjq01p40eoa9vcc.apps.googleusercontent.com',
         scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file',
         callback: (response) => {
           if (response.error || !response.access_token) {

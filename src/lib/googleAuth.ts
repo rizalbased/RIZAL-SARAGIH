@@ -275,7 +275,7 @@ function generateSimulatedGoogleCredential(): string {
       name: 'Siswa SMK Multi Karya',
       picture: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=250',
       iss: 'https://accounts.google.com',
-      aud: GOOGLE_CLIENT_ID || '102938475610-mkverse.apps.googleusercontent.com',
+      aud: GOOGLE_CLIENT_ID || '562876324627-vbmn5a7grtcvak1remjq01p40eoa9vcc.apps.googleusercontent.com',
       exp: Math.floor(Date.now() / 1000) + 3600,
     })
   );
