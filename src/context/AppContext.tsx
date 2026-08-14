@@ -77,6 +77,7 @@ export interface AppContextType {
   verifyEmailStatus: () => Promise<boolean>;
   sendResetPasswordEmail: (email: string) => Promise<{ success: boolean; message: string }>;
   loginGoogle: (rememberMe?: boolean) => Promise<{ success: boolean; message?: string; needsUsernameSetup?: boolean }>;
+  loginGoogleWithCredential: (credential: string, rememberMe?: boolean) => Promise<{ success: boolean; message?: string; needsUsernameSetup?: boolean }>;
   submitGoogleUsername: (username: string) => Promise<{ success: boolean; message?: string }>;
   submitAdminNewPassword: (newPassword: string) => Promise<{ success: boolean; message?: string }>;
 
@@ -452,12 +453,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
-  const loginGoogle = async (rememberMe: boolean = true) => {
+  const loginGoogleWithCredential = async (credential: string, rememberMe: boolean = true) => {
     try {
-      console.log('[MKVERSE Google Auth] Memulai otentikasi Google Identity Services...');
-      const credential = await requestGoogleCredential();
-      console.log('[MKVERSE Google Auth] Kredensial Google berhasil diperoleh. Mengirim ke backend PHP...');
-      
+      console.log('[MKVERSE Google Auth] Mengirim kredensial Google ke backend PHP...');
       const res = await fetchApi('/api/auth/google.php', {
         method: 'POST',
         body: JSON.stringify({ credential, rememberMe })
@@ -477,6 +475,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
       return res;
+    } catch (err: any) {
+      console.error('[MKVERSE Google Auth API Error]:', err?.message || err);
+      return {
+        success: false,
+        message: err?.message || 'Gagal menghubungi server autentikasi API.'
+      };
+    }
+  };
+
+  const loginGoogle = async (rememberMe: boolean = true) => {
+    try {
+      console.log('[MKVERSE Google Auth] Memulai otentikasi Google Identity Services...');
+      const credential = await requestGoogleCredential();
+      return await loginGoogleWithCredential(credential, rememberMe);
     } catch (err: any) {
       console.error('[MKVERSE Google Auth Error]:', err?.message || err);
       return {
@@ -986,6 +998,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         verifyEmailStatus,
         sendResetPasswordEmail,
         loginGoogle,
+        loginGoogleWithCredential,
         submitGoogleUsername,
         submitAdminNewPassword,
 

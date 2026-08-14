@@ -2,7 +2,7 @@
  * Google Identity Services (GIS) Client Integration for MKVERSE
  * Frontend: https://app.mkverse.my.id
  * Backend API: https://api.mkverse.my.id/api/auth/google.php
- * NO Firebase Authentication used.
+ * Official Google Identity Services SDK — NO Firebase Authentication.
  */
 
 export const GOOGLE_CLIENT_ID =
@@ -23,7 +23,7 @@ export function loadGoogleScript(): Promise<any> {
     }
 
     const g = (window as any).google;
-    if (g && g.accounts) {
+    if (g && g.accounts && g.accounts.id) {
       return resolve(g);
     }
 
@@ -33,12 +33,12 @@ export function loadGoogleScript(): Promise<any> {
       const interval = setInterval(() => {
         checks++;
         const googleObj = (window as any).google;
-        if (googleObj && googleObj.accounts) {
+        if (googleObj && googleObj.accounts && googleObj.accounts.id) {
           clearInterval(interval);
           resolve(googleObj);
-        } else if (checks > 40) {
+        } else if (checks > 50) {
           clearInterval(interval);
-          reject(new Error('Google Identity Services SDK gagal diinisialisasi dalam waktu yang ditentukan.'));
+          reject(new Error('Google Identity Services SDK gagal diinisialisasi dalam batas waktu.'));
         }
       }, 50);
       return;
@@ -50,10 +50,10 @@ export function loadGoogleScript(): Promise<any> {
     script.defer = true;
     script.onload = () => {
       const loadedGoogle = (window as any).google;
-      if (loadedGoogle && loadedGoogle.accounts) {
+      if (loadedGoogle && loadedGoogle.accounts && loadedGoogle.accounts.id) {
         resolve(loadedGoogle);
       } else {
-        reject(new Error('Google Identity Services script dimuat tetapi objek google.accounts tidak ditemukan.'));
+        reject(new Error('Google Identity Services script dimuat tetapi objek google.accounts.id tidak ditemukan.'));
       }
     };
     script.onerror = () => {
@@ -64,14 +64,91 @@ export function loadGoogleScript(): Promise<any> {
 }
 
 /**
+ * Inisialisasi Google Identity Services resmi
+ */
+export async function initializeGoogleIdentityServices(
+  onCredentialReceived: (credential: string) => void,
+  onError?: (err: Error) => void
+): Promise<any> {
+  console.log('Google Client ID configured:', !!GOOGLE_CLIENT_ID);
+  console.log('Google API URL:', API_URL);
+
+  const google = await loadGoogleScript();
+
+  if (!GOOGLE_CLIENT_ID) {
+    if (import.meta.env.DEV) {
+      console.warn('[Google Auth DEV] VITE_GOOGLE_CLIENT_ID belum diset. Menggunakan mode simulasi dev.');
+      return google;
+    }
+    const err = new Error('Google Client ID belum dikonfigurasi. Harap tentukan VITE_GOOGLE_CLIENT_ID di file .env.');
+    if (onError) onError(err);
+    throw err;
+  }
+
+  try {
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: (response: any) => {
+        console.log('Google credential received:', !!response?.credential);
+        if (response && response.credential) {
+          onCredentialReceived(response.credential);
+        } else {
+          const err = new Error('Google credential tidak diterima dari respon server Google.');
+          if (onError) onError(err);
+        }
+      },
+      auto_select: false,
+      cancel_on_tap_outside: false,
+      itp_support: true,
+    });
+    return google;
+  } catch (e: any) {
+    const err = new Error(e?.message || 'Gagal menginisialisasi Google Identity Services.');
+    if (onError) onError(err);
+    throw err;
+  }
+}
+
+/**
+ * Render official Google Sign-In button on target HTML element using Google Identity Services.
+ */
+export async function renderGoogleButton(
+  container: HTMLElement,
+  onCredentialReceived: (credential: string) => void,
+  onError?: (err: Error) => void,
+  options?: {
+    theme?: 'outline' | 'filled_blue' | 'filled_black';
+    size?: 'large' | 'medium' | 'small';
+    text?: 'signin_with' | 'signup_with' | 'continue_with';
+    shape?: 'rectangular' | 'pill' | 'circle' | 'square';
+    width?: number;
+  }
+): Promise<void> {
+  const google = await initializeGoogleIdentityServices(onCredentialReceived, onError);
+  if (!google || !google.accounts || !google.accounts.id) return;
+
+  try {
+    container.innerHTML = '';
+    google.accounts.id.renderButton(container, {
+      theme: options?.theme || 'outline',
+      size: options?.size || 'large',
+      text: options?.text || 'signin_with',
+      shape: options?.shape || 'rectangular',
+      width: options?.width || 320,
+      logo_alignment: 'left',
+    });
+  } catch (e: any) {
+    console.error('[GIS renderButton error]:', e);
+  }
+}
+
+/**
  * Request Google Credential or Token using official Google Identity Services.
  * Accurately reports error root causes without false "user cancelled" messages.
  */
 export async function requestGoogleCredential(): Promise<string> {
   console.log('Google Client ID configured:', !!GOOGLE_CLIENT_ID);
   console.log('Google API URL:', API_URL);
-
-  const google = await loadGoogleScript();
 
   if (!GOOGLE_CLIENT_ID) {
     if (import.meta.env.DEV) {
@@ -80,6 +157,8 @@ export async function requestGoogleCredential(): Promise<string> {
     }
     throw new Error('Google Client ID belum dikonfigurasi. Harap tentukan VITE_GOOGLE_CLIENT_ID di file .env.');
   }
+
+  const google = await loadGoogleScript();
 
   return new Promise<string>((resolve, reject) => {
     let resolved = false;
@@ -101,7 +180,7 @@ export async function requestGoogleCredential(): Promise<string> {
     };
 
     try {
-      // 1. Initialize Google Identity Services ID token client
+      // Initialize GIS
       google.accounts.id.initialize({
         client_id: GOOGLE_CLIENT_ID,
         callback: (response: any) => {
@@ -117,8 +196,7 @@ export async function requestGoogleCredential(): Promise<string> {
         itp_support: true,
       });
 
-      // 2. Open Google OAuth2 Popup for user-initiated clicks
-      // This is the officially recommended user gesture flow for custom buttons in Google Identity Services
+      // User gesture flow: OAuth2 Token Client for popup account picker
       if (google.accounts.oauth2 && typeof google.accounts.oauth2.initTokenClient === 'function') {
         const tokenClient = google.accounts.oauth2.initTokenClient({
           client_id: GOOGLE_CLIENT_ID,
@@ -154,7 +232,7 @@ export async function requestGoogleCredential(): Promise<string> {
 
         tokenClient.requestAccessToken({ prompt: 'select_account' });
       } else {
-        // Fallback to prompt if oauth2 is not available
+        // Fallback to GIS prompt if oauth2 is not available
         google.accounts.id.prompt((notification: any) => {
           if (notification.isNotDisplayed && notification.isNotDisplayed()) {
             const reason = typeof notification.getNotDisplayedReason === 'function' ? notification.getNotDisplayedReason() : 'unknown';
