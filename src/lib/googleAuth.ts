@@ -7,7 +7,7 @@
 
 export const GOOGLE_CLIENT_ID =
   import.meta.env.VITE_GOOGLE_CLIENT_ID ||
-  '';
+  '562876324627-vbmn5a7grtcvak1remjq01p40eoa9vcc.apps.googleusercontent.com';
 
 export const API_URL =
   import.meta.env.VITE_API_URL ||

@@ -44,7 +44,7 @@ if (empty($credential)) {
     exit;
 }
 
-$expectedClientId = getenv('VITE_GOOGLE_CLIENT_ID') ?: getenv('GOOGLE_CLIENT_ID') ?: '';
+$expectedClientId = getenv('VITE_GOOGLE_CLIENT_ID') ?: getenv('GOOGLE_CLIENT_ID') ?: '562876324627-vbmn5a7grtcvak1remjq01p40eoa9vcc.apps.googleusercontent.com';
 
 $googlePayload = null;
 $verificationError = null;
