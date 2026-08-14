@@ -81,10 +81,21 @@ try {
     $verificationUrl = $mailConfig['app_url'] . '/verify-email?token=' . $rawToken;
     $emailHtml = get_verification_email_html($user['display_name'], $verificationUrl);
 
-    send_smtp_mail($email, $user['display_name'], "Verifikasi Email Akun MKVERSE", $emailHtml);
+    $mailSent = send_smtp_mail($email, $user['display_name'], "Verifikasi Email Akun MKVERSE", $emailHtml);
 
     // Record rate limit attempt
     record_rate_limit_attempt($pdo, 'resend_verification', $rateKey, 600);
+
+    if (!$mailSent['success']) {
+        error_log("Resend email delivery failed for user {$user['id']}: " . ($mailSent['error'] ?? 'Unknown error'));
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Gagal mengirim email verifikasi ke ' . $email . ': ' . ($mailSent['message'] ?? 'Kendala koneksi SMTP'),
+            'error' => $mailSent['error'] ?? null
+        ]);
+        exit;
+    }
 
     echo json_encode([
         'success' => true,

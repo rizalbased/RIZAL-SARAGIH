@@ -1,121 +1,280 @@
 <?php
 // api/config/mail.php
-// SMTP Mailer & Email Templates for MKVERSE using Gmail SMTP
+// SMTP Mailer Engine & Professional HTML Templates for MKVERSE (Gmail SMTP / cPanel)
+require_once __DIR__ . '/env.php';
 
-function get_mail_config() {
+function get_mail_config(): array {
+    $rawPass = get_env('SMTP_PASSWORD', '');
+    // Sanitize Google App Password (remove accidental spaces)
+    $cleanPass = str_replace(' ', '', trim($rawPass));
+
+    $fromEmail = get_env('MAIL_FROM_ADDRESS', get_env('SMTP_USERNAME', 'rizalstudios.backup01@gmail.com'));
+    $smtpUser = get_env('SMTP_USERNAME', $fromEmail);
+
     return [
-        'host' => getenv('SMTP_HOST') ?: 'smtp.gmail.com',
-        'port' => (int)(getenv('SMTP_PORT') ?: 465),
-        'user' => getenv('SMTP_USERNAME') ?: 'rizalstudios.backup01@gmail.com',
-        'pass' => getenv('SMTP_PASSWORD') ?: '',
-        'encryption' => getenv('SMTP_ENCRYPTION') ?: 'ssl', // ssl or tls
-        'from_email' => getenv('MAIL_FROM_ADDRESS') ?: 'rizalstudios.backup01@gmail.com',
-        'from_name' => getenv('MAIL_FROM_NAME') ?: 'MKVERSE',
-        'app_url' => rtrim(getenv('APP_URL') ?: 'https://app.mkverse.my.id', '/'),
+        'host' => get_env('SMTP_HOST', 'smtp.gmail.com'),
+        'port' => (int)get_env('SMTP_PORT', 465),
+        'user' => $smtpUser,
+        'pass' => $cleanPass,
+        'encryption' => strtolower(get_env('SMTP_ENCRYPTION', 'ssl')), // 'ssl' or 'tls'
+        'from_email' => $fromEmail,
+        'from_name' => get_env('MAIL_FROM_NAME', 'MKVERSE'),
+        'app_url' => rtrim(get_env('APP_URL', 'https://app.mkverse.my.id'), '/'),
     ];
 }
 
 /**
- * Sends an email using pure PHP SMTP sockets with TLS/SSL support.
+ * Sends an email using pure PHP SMTP sockets with TLS/SSL, authentication, and detailed diagnostics.
+ * 
+ * @param string $toEmail Recipient email address
+ * @param string $toName Recipient display name
+ * @param string $subject Email subject
+ * @param string $htmlContent Complete HTML email content
+ * @return array ['success' => bool, 'message' => string, 'error' => ?string]
  */
-function send_smtp_mail(string $toEmail, string $toName, string $subject, string $htmlContent): bool {
+function send_smtp_mail(string $toEmail, string $toName, string $subject, string $htmlContent): array {
     $config = get_mail_config();
-    
-    // If SMTP password is not set, log and attempt standard mail() fallback
+
+    $toEmail = trim($toEmail);
+    if (empty($toEmail) || !filter_var($toEmail, FILTER_VALIDATE_EMAIL)) {
+        return [
+            'success' => false,
+            'message' => 'Alamat email penerima tidak valid.',
+            'error' => 'Invalid recipient email: ' . $toEmail
+        ];
+    }
+
     if (empty($config['user']) || empty($config['pass'])) {
-        $headers = "MIME-Version: 1.0\r\n";
-        $headers .= "Content-Type: text/html; charset=UTF-8\r\n";
-        $headers .= "From: " . "=?UTF-8?B?" . base64_encode($config['from_name']) . "?=" . " <" . $config['from_email'] . ">\r\n";
-        $headers .= "Reply-To: " . $config['from_email'] . "\r\n";
-        $headers .= "X-Mailer: PHP/" . phpversion();
-        
-        @mail($toEmail, $subject, $htmlContent, $headers);
-        return true;
+        error_log("[MKVERSE SMTP ERROR] SMTP_USERNAME or SMTP_PASSWORD environment variable is not configured.");
+        return [
+            'success' => false,
+            'message' => 'Konfigurasi SMTP belum lengkap di server backend.',
+            'error' => 'SMTP credentials missing (SMTP_USERNAME or SMTP_PASSWORD is empty).'
+        ];
     }
 
     $host = $config['host'];
     $port = $config['port'];
-    $timeout = 10;
-    
-    $socketHost = ($config['encryption'] === 'ssl' || $port === 465) ? 'ssl://' . $host : $host;
+    $timeout = 15; // seconds
+
+    $isSSL = ($config['encryption'] === 'ssl' || $port === 465);
+    $socketHost = $isSSL ? 'ssl://' . $host : $host;
+
+    error_log("[MKVERSE SMTP] Connecting to {$socketHost}:{$port} for recipient <{$toEmail}>...");
+
     $socket = @fsockopen($socketHost, $port, $errno, $errstr, $timeout);
 
     if (!$socket) {
-        error_log("SMTP connection failed: $errstr ($errno)");
-        return false;
+        $errorMsg = "Gagal terhubung ke mail server SMTP ($errstr, code $errno)";
+        error_log("[MKVERSE SMTP ERROR] Connection failed: " . $errorMsg);
+        return [
+            'success' => false,
+            'message' => 'Gagal terhubung ke mail server SMTP.',
+            'error' => $errorMsg
+        ];
     }
 
-    $read = function() use ($socket) {
+    stream_set_timeout($socket, $timeout);
+
+    $readResponse = function() use ($socket): string {
         $response = '';
         while ($line = fgets($socket, 515)) {
             $response .= $line;
-            if (substr($line, 3, 1) === ' ') break;
+            // In RFC 5321: the 4th character is a space ' ' on the last line of a multi-line reply
+            if (isset($line[3]) && $line[3] === ' ') {
+                break;
+            }
         }
-        return $response;
+        return trim($response);
     };
 
-    $write = function($cmd) use ($socket) {
+    $sendCommand = function(string $cmd) use ($socket): void {
         fputs($socket, $cmd . "\r\n");
     };
 
-    $read();
-    $write("EHLO " . ($_SERVER['SERVER_NAME'] ?? 'localhost'));
-    $read();
-
-    if ($config['encryption'] === 'tls' && $port !== 465) {
-        $write("STARTTLS");
-        $tlsResponse = $read();
-        if (substr($tlsResponse, 0, 3) !== '220') {
-            fclose($socket);
-            return false;
-        }
-        stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
-        $write("EHLO " . ($_SERVER['SERVER_NAME'] ?? 'localhost'));
-        $read();
-    }
-
-    $write("AUTH LOGIN");
-    $read();
-    $write(base64_encode($config['user']));
-    $read();
-    $write(base64_encode($config['pass']));
-    $authResp = $read();
-
-    if (substr($authResp, 0, 3) !== '235') {
-        error_log("SMTP Auth failed: " . $authResp);
+    // 1. Read initial banner (220)
+    $banner = $readResponse();
+    if (substr($banner, 0, 3) !== '220') {
         fclose($socket);
-        return false;
+        error_log("[MKVERSE SMTP ERROR] Invalid banner response: " . $banner);
+        return [
+            'success' => false,
+            'message' => 'Respon mail server tidak valid saat inisialisasi.',
+            'error' => 'SMTP Banner Error: ' . $banner
+        ];
     }
 
-    $write("MAIL FROM: <" . $config['from_email'] . ">");
-    $read();
-    $write("RCPT TO: <" . $toEmail . ">");
-    $read();
-    $write("DATA");
-    $read();
+    // 2. Send EHLO
+    $clientDomain = !empty($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : 'mkverse.my.id';
+    $sendCommand("EHLO " . $clientDomain);
+    $ehloResp = $readResponse();
 
-    $headers = "MIME-Version: 1.0\r\n";
-    $headers .= "Content-Type: text/html; charset=UTF-8\r\n";
-    $headers .= "From: " . "=?UTF-8?B?" . base64_encode($config['from_name']) . "?=" . " <" . $config['from_email'] . ">\r\n";
-    $headers .= "To: " . "=?UTF-8?B?" . base64_encode($toName) . "?=" . " <" . $toEmail . ">\r\n";
-    $headers .= "Subject: " . "=?UTF-8?B?" . base64_encode($subject) . "?=\r\n";
-    $headers .= "Date: " . date('r') . "\r\n";
+    // 3. Handle STARTTLS if configured for port 587
+    if ($config['encryption'] === 'tls' && !$isSSL) {
+        $sendCommand("STARTTLS");
+        $tlsResp = $readResponse();
+        if (substr($tlsResp, 0, 3) !== '220') {
+            fclose($socket);
+            error_log("[MKVERSE SMTP ERROR] STARTTLS failed: " . $tlsResp);
+            return [
+                'success' => false,
+                'message' => 'Gagal mengaktifkan enkripsi TLS pada koneksi SMTP.',
+                'error' => 'STARTTLS error: ' . $tlsResp
+            ];
+        }
 
-    $message = $headers . "\r\n" . $htmlContent . "\r\n.\r\n";
-    fputs($socket, $message);
-    $read();
+        $cryptoMethod = STREAM_CRYPTO_METHOD_TLS_CLIENT;
+        if (defined('STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT')) {
+            $cryptoMethod |= STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;
+        }
+        if (defined('STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT')) {
+            $cryptoMethod |= STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT;
+        }
 
-    $write("QUIT");
-    $read();
+        if (!stream_socket_enable_crypto($socket, true, $cryptoMethod)) {
+            fclose($socket);
+            error_log("[MKVERSE SMTP ERROR] TLS handshake failed.");
+            return [
+                'success' => false,
+                'message' => 'Handshake enkripsi TLS gagal.',
+                'error' => 'TLS crypto handshake failed'
+            ];
+        }
+
+        $sendCommand("EHLO " . $clientDomain);
+        $readResponse();
+    }
+
+    // 4. AUTH LOGIN
+    $sendCommand("AUTH LOGIN");
+    $authInit = $readResponse();
+    if (substr($authInit, 0, 3) !== '334') {
+        fclose($socket);
+        error_log("[MKVERSE SMTP ERROR] AUTH LOGIN rejected: " . $authInit);
+        return [
+            'success' => false,
+            'message' => 'Metode autentikasi SMTP tidak didukung oleh mail server.',
+            'error' => 'AUTH LOGIN rejected: ' . $authInit
+        ];
+    }
+
+    // Send Base64 Username
+    $sendCommand(base64_encode($config['user']));
+    $authUserResp = $readResponse();
+    if (substr($authUserResp, 0, 3) !== '334') {
+        fclose($socket);
+        error_log("[MKVERSE SMTP ERROR] SMTP Username rejected: " . $authUserResp);
+        return [
+            'success' => false,
+            'message' => 'Username SMTP ditolak oleh server.',
+            'error' => 'SMTP Username rejected: ' . $authUserResp
+        ];
+    }
+
+    // Send Base64 Password
+    $sendCommand(base64_encode($config['pass']));
+    $authPassResp = $readResponse();
+    if (substr($authPassResp, 0, 3) !== '235') {
+        fclose($socket);
+        error_log("[MKVERSE SMTP ERROR] SMTP Authentication failed: " . $authPassResp);
+        return [
+            'success' => false,
+            'message' => 'Autentikasi SMTP gagal. Pastikan Anda menggunakan Google App Password yang valid (bukan password login biasa).',
+            'error' => 'SMTP Auth failed: ' . $authPassResp
+        ];
+    }
+
+    // 5. MAIL FROM
+    $sendCommand("MAIL FROM: <" . $config['from_email'] . ">");
+    $mailFromResp = $readResponse();
+    if (substr($mailFromResp, 0, 3) !== '250') {
+        fclose($socket);
+        error_log("[MKVERSE SMTP ERROR] MAIL FROM rejected: " . $mailFromResp);
+        return [
+            'success' => false,
+            'message' => 'Alamat pengirim email ditolak oleh server SMTP.',
+            'error' => 'MAIL FROM rejected: ' . $mailFromResp
+        ];
+    }
+
+    // 6. RCPT TO
+    $sendCommand("RCPT TO: <" . $toEmail . ">");
+    $rcptResp = $readResponse();
+    if (substr($rcptResp, 0, 3) !== '250' && substr($rcptResp, 0, 3) !== '251') {
+        fclose($socket);
+        error_log("[MKVERSE SMTP ERROR] RCPT TO rejected for <{$toEmail}>: " . $rcptResp);
+        return [
+            'success' => false,
+            'message' => 'Alamat email penerima ditolak oleh mail server.',
+            'error' => 'RCPT TO rejected: ' . $rcptResp
+        ];
+    }
+
+    // 7. DATA
+    $sendCommand("DATA");
+    $dataResp = $readResponse();
+    if (substr($dataResp, 0, 3) !== '354') {
+        fclose($socket);
+        error_log("[MKVERSE SMTP ERROR] DATA command rejected: " . $dataResp);
+        return [
+            'success' => false,
+            'message' => 'Gagal mengirimkan konten data email ke server SMTP.',
+            'error' => 'DATA command rejected: ' . $dataResp
+        ];
+    }
+
+    // Prepare MIME Headers
+    $encodedSubject = "=?UTF-8?B?" . base64_encode($subject) . "?=";
+    $encodedFromName = "=?UTF-8?B?" . base64_encode($config['from_name']) . "?=";
+    $encodedToName = !empty($toName) ? "=?UTF-8?B?" . base64_encode($toName) . "?=" : $toEmail;
+
+    $headers = [];
+    $headers[] = "From: {$encodedFromName} <{$config['from_email']}>";
+    $headers[] = "To: {$encodedToName} <{$toEmail}>";
+    $headers[] = "Reply-To: <{$config['from_email']}>";
+    $headers[] = "Subject: {$encodedSubject}";
+    $headers[] = "MIME-Version: 1.0";
+    $headers[] = "Content-Type: text/html; charset=UTF-8";
+    $headers[] = "Content-Transfer-Encoding: 8bit";
+    $headers[] = "Date: " . date('r');
+    $headers[] = "Message-ID: <" . time() . "." . bin2hex(random_bytes(8)) . "@" . $clientDomain . ">";
+    $headers[] = "X-Mailer: MKVERSE Engine v2.0";
+
+    $messagePayload = implode("\r\n", $headers) . "\r\n\r\n" . $htmlContent . "\r\n.";
+    fputs($socket, $messagePayload . "\r\n");
+
+    $sendResult = $readResponse();
+    if (substr($sendResult, 0, 3) !== '250') {
+        fclose($socket);
+        error_log("[MKVERSE SMTP ERROR] Message delivery failed: " . $sendResult);
+        return [
+            'success' => false,
+            'message' => 'Server menolak pengiriman isi email.',
+            'error' => 'Delivery response error: ' . $sendResult
+        ];
+    }
+
+    // 8. QUIT
+    $sendCommand("QUIT");
+    $readResponse();
     fclose($socket);
 
-    return true;
+    error_log("[MKVERSE SMTP SUCCESS] Verification/Notification email successfully delivered to <{$toEmail}> (Status: {$sendResult})");
+
+    return [
+        'success' => true,
+        'message' => 'Email berhasil dikirim ke ' . $toEmail,
+        'error' => null
+    ];
 }
 
 /**
  * HTML Email Template for Email Verification
  */
 function get_verification_email_html(string $name, string $verificationUrl): string {
+    $escapedName = htmlspecialchars($name, ENT_QUOTES, 'UTF-8');
+    $escapedUrl = htmlspecialchars($verificationUrl, ENT_QUOTES, 'UTF-8');
+
     return <<<HTML
 <!DOCTYPE html>
 <html lang="id">
@@ -133,16 +292,16 @@ function get_verification_email_html(string $name, string $verificationUrl): str
           
           <!-- Header Banner -->
           <tr>
-            <td style="background-color:#0B0B0B; padding:28px 24px; text-align:center;">
+            <td style="background-color:#0B0B0B; padding:30px 24px; text-align:center;">
               <table role="presentation" align="center" cellspacing="0" cellpadding="0">
                 <tr>
-                  <td style="background-color:#B8FF00; color:#0B0B0B; font-weight:900; font-size:20px; padding:10px 18px; border-radius:14px; border:2px solid #0B0B0B; display:inline-block;">
-                    MKVERSE
+                  <td style="background-color:#B8FF00; color:#0B0B0B; font-weight:900; font-size:22px; padding:10px 22px; border-radius:14px; border:2px solid #0B0B0B; display:inline-block; letter-spacing:0.5px;">
+                    ⚡ MKVERSE
                   </td>
                 </tr>
               </table>
-              <h1 style="color:#FFFFFF; font-size:22px; font-weight:900; margin:16px 0 4px 0; letter-spacing:-0.5px;">
-                Verifikasi Email Akun Anda
+              <h1 style="color:#FFFFFF; font-size:22px; font-weight:900; margin:18px 0 4px 0; letter-spacing:-0.5px;">
+                Verifikasi Alamat Email Anda
               </h1>
               <p style="color:#A1A1AA; font-size:13px; margin:0; font-weight:600;">
                 Komunitas Digital SMK Multi Karya Medan
@@ -154,17 +313,17 @@ function get_verification_email_html(string $name, string $verificationUrl): str
           <tr>
             <td style="padding:32px 28px; background-color:#FFFFFF;">
               <p style="font-size:16px; font-weight:700; color:#0B0B0B; margin:0 0 12px 0;">
-                Halo, {$name}! 👋
+                Halo, {$escapedName}! 👋
               </p>
               <p style="font-size:14px; color:#4B5563; line-height:1.6; margin:0 0 24px 0;">
-                Terima kasih telah mendaftar di <strong>MKVERSE</strong>! Untuk mengaktifkan akun Anda dan menikmati seluruh fitur interaksi, radio sekolah, serta berbagi karya, silakan verifikasi alamat email Anda dengan menekan tombol di bawah ini:
+                Selamat datang di <strong>MKVERSE</strong>! Tinggal satu langkah lagi untuk mengaktifkan akun Anda. Silakan klik tombol di bawah ini untuk memverifikasi bahwa ini adalah alamat email aktif Anda:
               </p>
 
               <!-- CTA Button -->
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:28px 0;">
                 <tr>
                   <td align="center">
-                    <a href="{$verificationUrl}" target="_blank" style="display:inline-block; background-color:#B8FF00; color:#0B0B0B; font-size:15px; font-weight:900; text-decoration:none; padding:14px 32px; border-radius:16px; border:2px solid #0B0B0B; box-shadow:4px 4px 0px 0px #0B0B0B; text-align:center; transition:all 0.2s;">
+                    <a href="{$escapedUrl}" target="_blank" style="display:inline-block; background-color:#B8FF00; color:#0B0B0B; font-size:15px; font-weight:900; text-decoration:none; padding:15px 36px; border-radius:16px; border:2.5px solid #0B0B0B; box-shadow:4px 4px 0px 0px #0B0B0B; text-align:center;">
                       ✓ Verifikasi Email Sekarang
                     </a>
                   </td>
@@ -172,25 +331,28 @@ function get_verification_email_html(string $name, string $verificationUrl): str
               </table>
 
               <!-- Notice Box -->
-              <div style="background-color:#F4F4F5; border:2px dashed #0B0B0B; border-radius:14px; padding:14px 18px; margin:24px 0 16px 0;">
-                <p style="font-size:12px; color:#52525B; margin:0; line-height:1.5;">
-                  ⏳ <strong>Masa Berlaku:</strong> Link verifikasi ini berlaku selama <strong>24 jam</strong>. Jika tombol di atas tidak berfungsi, salin dan buka tautan berikut di browser Anda:
+              <div style="background-color:#F4F4F5; border:2px dashed #0B0B0B; border-radius:14px; padding:16px 18px; margin:24px 0 16px 0;">
+                <p style="font-size:12px; color:#3F3F46; margin:0 0 8px 0; font-weight:700;">
+                  ⏳ Masa Berlaku: 24 Jam
                 </p>
-                <p style="font-size:11px; word-break:break-all; color:#2563EB; margin:8px 0 0 0;">
-                  <a href="{$verificationUrl}" style="color:#2563EB;">{$verificationUrl}</a>
+                <p style="font-size:12px; color:#52525B; margin:0 0 8px 0; line-height:1.5;">
+                  Jika tombol di atas tidak dapat diklik, salin dan buka tautan berikut di browser Anda:
+                </p>
+                <p style="font-size:11px; word-break:break-all; color:#2563EB; margin:0; font-weight:600;">
+                  <a href="{$escapedUrl}" style="color:#2563EB; text-decoration:underline;">{$escapedUrl}</a>
                 </p>
               </div>
 
               <p style="font-size:12px; color:#71717A; margin:20px 0 0 0; line-height:1.5;">
-                Jika Anda tidak merasa mendaftar di MKVERSE, Anda dapat mengabaikan email ini dengan aman.
+                Jika Anda tidak merasa mendaftar di MKVERSE, abaikan email ini dengan aman. Akun tidak akan aktif tanpa verifikasi email.
               </p>
             </td>
           </tr>
 
           <!-- Footer -->
           <tr>
-            <td style="background-color:#F5F5F0; border-top:2px solid #0B0B0B; padding:18px 24px; text-align:center;">
-              <p style="font-size:12px; font-weight:700; color:#0B0B0B; margin:0 0 4px 0;">
+            <td style="background-color:#F5F5F0; border-top:2px solid #0B0B0B; padding:20px 24px; text-align:center;">
+              <p style="font-size:12px; font-weight:800; color:#0B0B0B; margin:0 0 4px 0;">
                 © 2025 MKVERSE — SMK Multi Karya Medan
               </p>
               <p style="font-size:11px; color:#71717A; margin:0;">
@@ -212,6 +374,9 @@ HTML;
  * HTML Email Template for Password Reset
  */
 function get_reset_password_email_html(string $name, string $resetUrl): string {
+    $escapedName = htmlspecialchars($name, ENT_QUOTES, 'UTF-8');
+    $escapedUrl = htmlspecialchars($resetUrl, ENT_QUOTES, 'UTF-8');
+
     return <<<HTML
 <!DOCTYPE html>
 <html lang="id">
@@ -229,16 +394,16 @@ function get_reset_password_email_html(string $name, string $resetUrl): string {
           
           <!-- Header Banner -->
           <tr>
-            <td style="background-color:#0B0B0B; padding:28px 24px; text-align:center;">
+            <td style="background-color:#0B0B0B; padding:30px 24px; text-align:center;">
               <table role="presentation" align="center" cellspacing="0" cellpadding="0">
                 <tr>
-                  <td style="background-color:#FFDD00; color:#0B0B0B; font-weight:900; font-size:20px; padding:10px 18px; border-radius:14px; border:2px solid #0B0B0B; display:inline-block;">
-                    MKVERSE
+                  <td style="background-color:#FFE600; color:#0B0B0B; font-weight:900; font-size:22px; padding:10px 22px; border-radius:14px; border:2px solid #0B0B0B; display:inline-block; letter-spacing:0.5px;">
+                    🔑 MKVERSE
                   </td>
                 </tr>
               </table>
-              <h1 style="color:#FFFFFF; font-size:22px; font-weight:900; margin:16px 0 4px 0; letter-spacing:-0.5px;">
-                Permintaan Reset Password
+              <h1 style="color:#FFFFFF; font-size:22px; font-weight:900; margin:18px 0 4px 0; letter-spacing:-0.5px;">
+                Permintaan Reset Kata Sandi
               </h1>
               <p style="color:#A1A1AA; font-size:13px; margin:0; font-weight:600;">
                 Atur Ulang Kata Sandi Akun Anda
@@ -250,43 +415,46 @@ function get_reset_password_email_html(string $name, string $resetUrl): string {
           <tr>
             <td style="padding:32px 28px; background-color:#FFFFFF;">
               <p style="font-size:16px; font-weight:700; color:#0B0B0B; margin:0 0 12px 0;">
-                Halo, {$name}! 🔒
+                Halo, {$escapedName}! 🔒
               </p>
               <p style="font-size:14px; color:#4B5563; line-height:1.6; margin:0 0 24px 0;">
-                Kami menerima permintaan untuk mereset kata sandi akun MKVERSE Anda. Klik tombol di bawah ini untuk membuat password baru:
+                Kami menerima permintaan untuk mereset kata sandi akun MKVERSE Anda. Klik tombol di bawah ini untuk membuat kata sandi baru:
               </p>
 
               <!-- CTA Button -->
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:28px 0;">
                 <tr>
                   <td align="center">
-                    <a href="{$resetUrl}" target="_blank" style="display:inline-block; background-color:#FFDD00; color:#0B0B0B; font-size:15px; font-weight:900; text-decoration:none; padding:14px 32px; border-radius:16px; border:2px solid #0B0B0B; box-shadow:4px 4px 0px 0px #0B0B0B; text-align:center; transition:all 0.2s;">
-                      🔑 Buat Password Baru
+                    <a href="{$escapedUrl}" target="_blank" style="display:inline-block; background-color:#FFE600; color:#0B0B0B; font-size:15px; font-weight:900; text-decoration:none; padding:15px 36px; border-radius:16px; border:2.5px solid #0B0B0B; box-shadow:4px 4px 0px 0px #0B0B0B; text-align:center;">
+                      🔑 Buat Kata Sandi Baru
                     </a>
                   </td>
                 </tr>
               </table>
 
               <!-- Notice Box -->
-              <div style="background-color:#FFFBEB; border:2px dashed #D97706; border-radius:14px; padding:14px 18px; margin:24px 0 16px 0;">
-                <p style="font-size:12px; color:#92400E; margin:0; line-height:1.5;">
-                  ⏱️ <strong>Keamanan:</strong> Link reset password ini hanya berlaku selama <strong>60 menit</strong>. Jika Anda tidak meminta reset password, abaikan email ini dan akun Anda tetap aman.
+              <div style="background-color:#FFFBEB; border:2px dashed #D97706; border-radius:14px; padding:16px 18px; margin:24px 0 16px 0;">
+                <p style="font-size:12px; color:#92400E; margin:0 0 8px 0; font-weight:700;">
+                  ⏱️ Masa Berlaku: 60 Menit
                 </p>
-                <p style="font-size:11px; word-break:break-all; color:#2563EB; margin:8px 0 0 0;">
-                  <a href="{$resetUrl}" style="color:#2563EB;">{$resetUrl}</a>
+                <p style="font-size:12px; color:#92400E; margin:0 0 8px 0; line-height:1.5;">
+                  Tautan ini hanya dapat digunakan satu kali. Jika tombol di atas tidak berfungsi, salin dan buka tautan berikut:
+                </p>
+                <p style="font-size:11px; word-break:break-all; color:#2563EB; margin:0; font-weight:600;">
+                  <a href="{$escapedUrl}" style="color:#2563EB; text-decoration:underline;">{$escapedUrl}</a>
                 </p>
               </div>
 
               <p style="font-size:12px; color:#71717A; margin:20px 0 0 0; line-height:1.5;">
-                Jangan bagikan link ini kepada siapa pun, termasuk staf sekolah.
+                Jika Anda tidak meminta reset kata sandi, abaikan email ini dan akun Anda tetap aman.
               </p>
             </td>
           </tr>
 
           <!-- Footer -->
           <tr>
-            <td style="background-color:#F5F5F0; border-top:2px solid #0B0B0B; padding:18px 24px; text-align:center;">
-              <p style="font-size:12px; font-weight:700; color:#0B0B0B; margin:0 0 4px 0;">
+            <td style="background-color:#F5F5F0; border-top:2px solid #0B0B0B; padding:20px 24px; text-align:center;">
+              <p style="font-size:12px; font-weight:800; color:#0B0B0B; margin:0 0 4px 0;">
                 © 2025 MKVERSE — SMK Multi Karya Medan
               </p>
               <p style="font-size:11px; color:#71717A; margin:0;">

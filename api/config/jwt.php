@@ -1,6 +1,8 @@
 <?php
 // api/config/jwt.php
-$jwt_secret = getenv('JWT_SECRET') ?: 'default_secret_key_change_in_production_123456';
+require_once __DIR__ . '/env.php';
+
+$jwt_secret = get_env('JWT_SECRET', 'default_secret_key_change_in_production_123456');
 
 function generate_jwt($payload) {
     global $jwt_secret;
@@ -12,6 +14,7 @@ function generate_jwt($payload) {
     $base64UrlSignature = str_replace(['+', '/', '='], ['-', '_', ''], base64_encode($signature));
     return $base64UrlHeader . "." . $base64UrlPayload . "." . $base64UrlSignature;
 }
+
 
 function verify_jwt($jwt) {
     global $jwt_secret;

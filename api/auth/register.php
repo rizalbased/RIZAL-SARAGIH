@@ -145,9 +145,22 @@ try {
     // Record rate limit attempt
     record_rate_limit_attempt($pdo, 'register', $clientIp, 3600);
 
+    if (!$mailSent['success']) {
+        error_log("Registration email delivery failed for user {$userId}: " . ($mailSent['error'] ?? 'Unknown SMTP error'));
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Gagal mengirim email verifikasi ke ' . $email . ': ' . ($mailSent['message'] ?? 'Kendala koneksi SMTP') . '. Silakan periksa konfigurasi email atau gunakan menu Kirim Ulang Verifikasi.',
+            'error' => $mailSent['error'] ?? null,
+            'email' => $email,
+            'needsVerification' => true
+        ]);
+        exit;
+    }
+
     echo json_encode([
         'success' => true,
-        'message' => 'Pendaftaran berhasil! Silakan periksa email Anda (' . $email . ') untuk melakukan verifikasi akun.',
+        'message' => 'Pendaftaran berhasil! Link verifikasi telah dikirim ke email Anda (' . $email . '). Silakan cek kotak masuk atau folder spam.',
         'email' => $email,
         'needsVerification' => true,
         'user' => [

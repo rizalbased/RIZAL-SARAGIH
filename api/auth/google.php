@@ -8,6 +8,7 @@ require_once __DIR__ . '/../config/cors.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/jwt.php';
 require_once __DIR__ . '/../config/security.php';
+require_once __DIR__ . '/../config/env.php';
 
 header('Content-Type: application/json');
 
@@ -44,7 +45,7 @@ if (empty($credential)) {
     exit;
 }
 
-$expectedClientId = getenv('VITE_GOOGLE_CLIENT_ID') ?: getenv('GOOGLE_CLIENT_ID') ?: '562876324627-vbmn5a7grtcvak1remjq01p40eoa9vcc.apps.googleusercontent.com';
+$expectedClientId = get_env('VITE_GOOGLE_CLIENT_ID', get_env('GOOGLE_CLIENT_ID', '562876324627-vbmn5a7grtcvak1remjq01p40eoa9vcc.apps.googleusercontent.com'));
 
 $googlePayload = null;
 $verificationError = null;
