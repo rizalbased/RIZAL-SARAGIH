@@ -30,7 +30,9 @@ export interface UserProfile {
   socialLinks?: SocialLinks;
   status: 'Active' | 'Suspended' | 'Pending';
   createdAt: string;
+  isVerified?: boolean;
   emailVerified?: boolean;
+  authProvider?: string;
   hasCompletedUsername?: boolean;
   mustChangePassword?: boolean;
   followingIds?: string[];

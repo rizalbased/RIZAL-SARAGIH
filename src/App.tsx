@@ -6,6 +6,8 @@ import { BottomNav } from './components/layout/BottomNav';
 import { RightSidebar } from './components/layout/RightSidebar';
 import { AuthModal } from './components/auth/AuthModal';
 import { CompleteProfileModal } from './components/auth/CompleteProfileModal';
+import { VerifyEmailModal } from './components/auth/VerifyEmailModal';
+import { ResetPasswordModal } from './components/auth/ResetPasswordModal';
 import { CreatePostModal } from './components/post/CreatePostModal';
 import { ReportModal } from './components/modals/ReportModal';
 import { SearchModal } from './components/modals/SearchModal';
@@ -30,6 +32,28 @@ const MainApp: React.FC = () => {
   const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
   const [isCreatePostOpen, setIsCreatePostOpen] = useState<boolean>(false);
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
+
+  // Email verification & Password reset states from URL
+  const [verifyToken, setVerifyToken] = useState<string | null>(null);
+  const [resetToken, setResetToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('token');
+      const pathname = window.location.pathname;
+
+      if (token) {
+        if (pathname.includes('reset-password') || params.get('action') === 'reset-password' || params.has('reset')) {
+          setResetToken(token);
+        } else if (pathname.includes('verify-email') || params.get('action') === 'verify-email' || params.has('verify') || !pathname.includes('reset')) {
+          setVerifyToken(token);
+        }
+      }
+    } catch (e) {
+      console.warn('URL param parse error:', e);
+    }
+  }, []);
 
   // Global shortcut (Cmd+K / Ctrl+K)
   useEffect(() => {
@@ -192,6 +216,28 @@ const MainApp: React.FC = () => {
 
       {/* Global Modals */}
       {needsUsernameSetup && <CompleteProfileModal />}
+
+      {verifyToken && (
+        <VerifyEmailModal 
+          token={verifyToken}
+          onClose={() => setVerifyToken(null)}
+          onOpenLogin={() => {
+            setVerifyToken(null);
+            setIsAuthOpen(true);
+          }}
+        />
+      )}
+
+      {resetToken && (
+        <ResetPasswordModal 
+          token={resetToken}
+          onClose={() => setResetToken(null)}
+          onOpenLogin={() => {
+            setResetToken(null);
+            setIsAuthOpen(true);
+          }}
+        />
+      )}
 
       <AuthModal 
         isOpen={isAuthOpen}
