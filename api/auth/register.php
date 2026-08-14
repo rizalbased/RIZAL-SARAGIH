@@ -105,23 +105,29 @@ $avatar = 'https://api.dicebear.com/7.x/bottts/svg?seed=' . urlencode($username)
 try {
     $insert = $pdo->prepare("
         INSERT INTO users (
-            id, username, email, password_hash, display_name, avatar,
-            user_type, role, kelas, jurusan, mata_pelajaran, divisi,
+            id, full_name, display_name, username, email, password_hash,
+            profile_photo, avatar, membership_status, user_type, role,
+            class_name, kelas, major, jurusan, mata_pelajaran, divisi,
             status, email_verified, auth_provider,
             verification_token_hash, verification_expires_at, has_completed_profile
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active', 0, 'local', ?, ?, 1)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active', 0, 'local', ?, ?, 1)
     ");
 
     $insert->execute([
         $userId,
+        $name,
+        $name,
         $username,
         $email,
         $passwordHash,
-        $name,
         $avatar,
+        $avatar,
+        $userType,
         $userType,
         $role,
         $kelas ?: null,
+        $kelas ?: null,
+        $jurusan ?: null,
         $jurusan ?: null,
         $mataPelajaran ?: null,
         $divisi ?: null,

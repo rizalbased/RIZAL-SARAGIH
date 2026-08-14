@@ -126,6 +126,7 @@ export interface AppContextType {
   deleteUser: (userId: string) => Promise<void>;
   exportUsersCSV: () => void;
   exportUsersJSON: () => void;
+  refreshUsers: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -192,18 +193,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // -------------------------------------------------------------
   
-  // FETCH USERS FROM API
-  useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const data = await fetchApi('/api/users/index.php');
-        if (data.success) {
-          setUsers(data.users);
-        }
-      } catch (err) {
-        console.error('Fetch users failed', err);
+  // FETCH USERS FROM API / MYSQL
+  const fetchUsers = async () => {
+    try {
+      const data = await fetchApi('/api/users/index.php');
+      if (data.success && Array.isArray(data.users)) {
+        setUsers(data.users);
       }
-    };
+    } catch (err) {
+      console.error('Fetch users failed', err);
+    }
+  };
+
+  useEffect(() => {
     fetchUsers();
   }, []);
 
@@ -350,9 +352,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setAuthIsSuspended(false);
       setMustChangeAdminPassword(false);
       setNeedsUsernameSetup(res.needsUsernameSetup || false);
+      fetchUsers();
     } else if (res.needsVerification) {
       if (res.user) setCurrentUser(res.user);
       setAuthNeedsVerification(true);
+      fetchUsers();
     } else if (res.isSuspended) {
       setAuthIsSuspended(true);
     }
@@ -368,6 +372,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (res.success && res.user) {
       setCurrentUser(res.user);
       setAuthNeedsVerification(true);
+      fetchUsers();
     }
     return res;
   };
@@ -384,6 +389,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setAuthIsSuspended(false);
       setNeedsUsernameSetup(false);
       setMustChangeAdminPassword(false);
+      fetchUsers();
     }
   };
 
@@ -398,11 +404,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (res.success && res.user) {
         setCurrentUser(res.user);
+        fetchUsers();
         return { success: true, message: res.message };
       }
 
       // Fallback local update
       setCurrentUser(prev => prev ? { ...prev, ...updatedData } : null);
+      fetchUsers();
       return { success: true };
     } catch (err: any) {
       console.error('Update profile error:', err);
@@ -473,6 +481,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         } else {
           setNeedsUsernameSetup(false);
         }
+        fetchUsers();
       }
       return res;
     } catch (err: any) {
@@ -520,6 +529,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentUser(prev => prev ? { ...prev, username: cleanU, hasCompletedUsername: true } : null);
       }
       setNeedsUsernameSetup(false);
+      fetchUsers();
     }
     return res;
   };
@@ -1039,7 +1049,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateUserStatus,
         deleteUser,
         exportUsersCSV,
-        exportUsersJSON
+        exportUsersJSON,
+        refreshUsers: fetchUsers
       }}
     >
       {children}

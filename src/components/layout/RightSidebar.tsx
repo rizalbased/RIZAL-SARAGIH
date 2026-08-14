@@ -8,13 +8,13 @@ interface RightSidebarProps {
 }
 
 export const RightSidebar: React.FC<RightSidebarProps> = ({ onNavigate, onSelectNews }) => {
-  const { news, users } = useApp();
+  const { news, users, currentUser, viewProfile, toggleFollowUser, startChatWithUser } = useApp();
 
   const latestNews = news.length > 0 ? news[0] : null;
 
-  // Prioritize Admin account as recommended user to follow
-  const adminMember = users.find(u => u.role === 'ADMIN' || u.role === 'SUPER_ADMIN') || users[0];
-  const suggestedMembers = adminMember ? [adminMember] : [];
+  // Show active registered school members, excluding current user
+  const otherUsers = users.filter(u => u.id !== currentUser?.id);
+  const suggestedMembers = otherUsers.slice(0, 3);
 
   return (
     <aside className="hidden lg:block w-80 p-4 space-y-5 sticky top-[75px] h-[calc(100vh-85px)] overflow-y-auto no-scrollbar border-2.5 border-black bg-white shadow-[4px_4px_0px_0px_#000] rounded-3xl my-2">
@@ -110,10 +110,13 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ onNavigate, onSelect
           <div className="space-y-2.5">
             {suggestedMembers.map((member) => (
               <div key={member.id} className="p-2.5 bg-[#F7F7F0] rounded-xl border-2 border-black shadow-[2px_2px_0px_0px_#000] space-y-2">
-                <div className="flex items-center justify-between">
+                <div 
+                  onClick={() => viewProfile(member.id, onNavigate)}
+                  className="flex items-center justify-between cursor-pointer hover:opacity-80 transition-opacity"
+                >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <img 
-                      src={member.avatar} 
+                      src={member.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=250'} 
                       alt={member.name} 
                       className="w-9 h-9 rounded-lg object-cover border-2 border-black"
                     />
@@ -122,17 +125,31 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ onNavigate, onSelect
                       <p className="text-[10px] text-gray-700 font-bold truncate">@{member.username}</p>
                     </div>
                   </div>
-                  <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-[#B8FF00] text-black border border-black">
-                    ADMIN
+                  <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border border-black ${
+                    member.role === 'ADMIN' || member.role === 'SUPER_ADMIN'
+                      ? 'bg-[#B8FF00] text-black'
+                      : member.userType === 'Guru'
+                      ? 'bg-[#00F0FF] text-black'
+                      : 'bg-white text-black'
+                  }`}>
+                    {member.role === 'ADMIN' || member.role === 'SUPER_ADMIN' ? 'ADMIN' : (member.userType || 'SISWA').toUpperCase()}
                   </span>
                 </div>
 
-                <button
-                  onClick={() => onNavigate('explore')}
-                  className="neo-btn w-full text-[11px] py-1.5 px-3 flex items-center justify-center gap-1"
-                >
-                  + Ikuti Admin Sekolah
-                </button>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => viewProfile(member.id, onNavigate)}
+                    className="neo-btn flex-1 text-[11px] py-1 px-2 flex items-center justify-center gap-1"
+                  >
+                    Profil
+                  </button>
+                  <button
+                    onClick={() => onNavigate('explore')}
+                    className="text-[11px] font-black py-1 px-2.5 bg-[#FFE600] text-black border-2 border-black rounded-lg shadow-[1.5px_1.5px_0px_0px_#000] hover:translate-x-[-1px] hover:translate-y-[-1px]"
+                  >
+                    Lihat
+                  </button>
+                </div>
               </div>
             ))}
           </div>
