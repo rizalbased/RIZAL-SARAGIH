@@ -1,6 +1,5 @@
-
 import { UserProfile } from '../types';
-import { fetchApi } from '../lib/api';
+import { supabase, mapProfileRow } from '../lib/supabase';
 
 declare global {
   interface Window {
@@ -41,7 +40,7 @@ export async function getGoogleAccessToken(): Promise<string> {
 
     try {
       const client = window.google.accounts.oauth2.initTokenClient({
-        client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '562876324627-vbmn5a7grtcvak1remjq01p40eoa9vcc.apps.googleusercontent.com',
+        client_id: '562876324627-vbmn5a7grtcvak1remjq01p40eoa9vcc.apps.googleusercontent.com',
         scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file',
         callback: (response) => {
           if (response.error || !response.access_token) {
@@ -73,7 +72,6 @@ const SHEET_NAME = 'Users';
  * Search or Create the MKVERSE Google Spreadsheet
  */
 async function getOrCreateSpreadsheet(accessToken: string): Promise<string> {
-  // 1. Search Google Drive for spreadsheet by title
   const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
     `name='${SPREADSHEET_TITLE}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`
   )}`;
@@ -89,7 +87,7 @@ async function getOrCreateSpreadsheet(accessToken: string): Promise<string> {
     }
   }
 
-  // 2. Create spreadsheet if not found
+  // Create spreadsheet if not found
   const createUrl = 'https://sheets.googleapis.com/v1/spreadsheets';
   const createRes = await fetch(createUrl, {
     method: 'POST',
@@ -120,9 +118,6 @@ async function getOrCreateSpreadsheet(accessToken: string): Promise<string> {
   return createData.spreadsheetId;
 }
 
-/**
- * Format date string into standard Indonesian format (e.g. DD/MM/YYYY)
- */
 function formatDate(dateStr?: string): string {
   if (!dateStr) return '-';
   try {
@@ -137,22 +132,15 @@ function formatDate(dateStr?: string): string {
   }
 }
 
-/**
- * Export Users list to Google Sheets
- */
 export async function exportUsersToGoogleSheets(
   usersToExport: UserProfile[],
-  adminUser: { id: string; name: string },
-  filterDescription = 'Semua User'
+  _adminUser: { id: string; name: string },
+  _filterDescription = 'Semua User'
 ): Promise<{ success: boolean; spreadsheetUrl?: string; message?: string }> {
   try {
-    // 1. Obtain Google OAuth Access Token
     const accessToken = await getGoogleAccessToken();
-
-    // 2. Get or create spreadsheet
     const spreadsheetId = await getOrCreateSpreadsheet(accessToken);
 
-    // 3. Prepare Header and Data rows (NO Passwords, Tokens, or Secrets)
     const headers = [
       'No',
       'Nama',
@@ -180,12 +168,11 @@ export async function exportUsersToGoogleSheets(
       user.followingCount || 0,
       user.postsCount || 0,
       formatDate(user.createdAt),
-      user.id // User ID (for deduplication / sync)
+      user.id
     ]);
 
     const allValues = [headers, ...dataRows];
 
-    // 4. Update worksheet values cleanly
     const updateUrl = `https://sheets.googleapis.com/v1/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(
       SHEET_NAME
     )}!A1?valueInputOption=USER_ENTERED`;
@@ -209,7 +196,6 @@ export async function exportUsersToGoogleSheets(
       throw new Error('Gagal memperbarui data pada Google Sheets.');
     }
 
-    // 5. Apply Header Styling & Freeze Row via batchUpdate
     try {
       const batchUrl = `https://sheets.googleapis.com/v1/spreadsheets/${spreadsheetId}:batchUpdate`;
       await fetch(batchUrl, {
@@ -229,10 +215,10 @@ export async function exportUsersToGoogleSheets(
                 },
                 cell: {
                   userEnteredFormat: {
-                    backgroundColor: { red: 0.04, green: 0.04, blue: 0.04 }, // MKVERSE dark theme #0B0B0B
+                    backgroundColor: { red: 0.04, green: 0.04, blue: 0.04 },
                     textFormat: {
                       bold: true,
-                      foregroundColor: { red: 0.72, green: 1.0, blue: 0.0 }, // #B8FF00 lime accent
+                      foregroundColor: { red: 0.72, green: 1.0, blue: 0.0 },
                       fontSize: 10
                     },
                     alignment: { horizontal: 'CENTER' }
@@ -250,8 +236,6 @@ export async function exportUsersToGoogleSheets(
 
     const spreadsheetUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
 
-    // Logs via API omitted for now
-
     return {
       success: true,
       spreadsheetUrl,
@@ -266,9 +250,6 @@ export async function exportUsersToGoogleSheets(
   }
 }
 
-/**
- * Backup / Fallback: Download CSV file
- */
 export function downloadUsersCSV(
   usersToExport: UserProfile[],
   filename = 'MKVERSE_Data_Warga_Sekolah.csv'
@@ -316,39 +297,11 @@ export function downloadUsersCSV(
   URL.revokeObjectURL(url);
 }
 
-/**
- * Helper to fetch freshest users array from Firestore for export
- */
 export async function fetchFreshUsersFromApi(): Promise<UserProfile[]> {
   try {
-    
-    
-
-    const results: UserProfile[] = [];
-
-    [].forEach((docSnap) => {
-      const data = docSnap.data();
-      results.push({
-        id: docSnap.id,
-        name: data.name || data.displayName || 'Warga MKVERSE',
-        username: data.username || 'user',
-        email: data.email || '',
-        avatar: data.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${docSnap.id}`,
-        bio: data.bio || 'Warga SMK Multi Karya Medan',
-        userType: data.userType || 'Siswa',
-        role: (data.role?.toUpperCase() === 'ADMIN' || data.role?.toUpperCase() === 'SUPER_ADMIN') ? 'ADMIN' : 'USER',
-        status: data.accountStatus === 'suspended' || data.status === 'Suspended' ? 'Suspended' : 'Active',
-        createdAt: data.createdAt || new Date().toISOString().split('T')[0],
-        emailVerified: !!data.emailVerified,
-        followersCount: data.followersCount || 0,
-        followingCount: data.followingCount || 0,
-        postsCount: data.postsCount || 0,
-        storiesCount: data.storiesCount || 0,
-        musicRequestsCount: data.musicRequestsCount || 0
-      });
-    });
-
-    return results;
+    const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
+    if (error || !data) return [];
+    return data.map(mapProfileRow);
   } catch (err) {
     console.error('Fetch fresh users error:', err);
     return [];

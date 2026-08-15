@@ -497,7 +497,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ onNaviga
           <div className="bg-amber-50/80 border border-amber-200 p-3 rounded-2xl text-[11px] text-amber-900 flex items-start gap-2">
             <Shield className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <p>
-              <span className="font-bold">Keamanan & Kebijakan Privasi Password:</span> Password user dikelola dengan enkripsi Bcrypt / Argon2id di database MySQL. Password plaintext <span className="font-bold underline">tidak pernah disimpan, ditampilkan, atau diekspor</span> ke Google Sheets demi menjaga keamanan privasi warga sekolah. Jika siswa/guru lupa kata sandi, gunakan fitur reset password via email.
+              <span className="font-bold">Keamanan & Kebijakan Privasi Password:</span> Password user dikelola dengan enkripsi aman oleh Supabase Auth & PostgreSQL Database. Password plaintext <span className="font-bold underline">tidak pernah disimpan, ditampilkan, atau diekspor</span> ke Google Sheets demi menjaga keamanan privasi warga sekolah. Jika siswa/guru lupa kata sandi, gunakan fitur reset password via email.
             </p>
           </div>
 

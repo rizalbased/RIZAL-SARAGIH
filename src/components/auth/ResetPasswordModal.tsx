@@ -1,15 +1,14 @@
 import React, { useState } from 'react';
-import { Lock, Eye, EyeOff, CheckCircle2, AlertCircle, RefreshCw, KeyRound } from 'lucide-react';
-import { fetchApi } from '../../lib/api';
+import { Lock, Eye, EyeOff, CheckCircle2, AlertCircle, RefreshCw, KeyRound, Sparkles } from 'lucide-react';
+import { updatePasswordSupabase } from '../../lib/supabase';
 
 interface ResetPasswordModalProps {
-  token: string;
+  token?: string;
   onClose: () => void;
   onOpenLogin: () => void;
 }
 
 export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
-  token,
   onClose,
   onOpenLogin,
 }) => {
@@ -56,24 +55,16 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
     setLoading(true);
 
     try {
-      const res = await fetchApi('/api/auth/reset-password.php', {
-        method: 'POST',
-        body: JSON.stringify({
-          token,
-          password,
-          confirmPassword,
-        }),
-      });
-
+      const res = await updatePasswordSupabase(password);
       setLoading(false);
 
       if (res.success) {
         setSuccessMessage(
-          res.message || 'Kata sandi berhasil diperbarui! Silakan login dengan password baru Anda.'
+          res.message || 'Kata sandi berhasil diperbarui! Silakan masuk dengan kata sandi baru Anda.'
         );
       } else {
         setErrorMessage(
-          res.message || 'Token reset password tidak valid atau telah kedaluwarsa.'
+          res.message || 'Gagal memperbarui kata sandi. Link reset mungkin telah kedaluwarsa.'
         );
       }
     } catch (err: any) {
@@ -100,19 +91,23 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
         </div>
 
         {errorMessage && (
-          <div className="bg-red-50 text-red-700 text-xs font-bold p-3 rounded-2xl mb-4 border-2 border-red-200 flex items-center gap-2">
+          <div className="p-3 mb-4 rounded-xl bg-red-50 border-2 border-red-200 flex items-center gap-2 text-xs font-bold text-red-700">
             <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
             <span>{errorMessage}</span>
           </div>
         )}
 
         {successMessage ? (
-          <div className="space-y-4 text-center">
-            <div className="bg-green-50 text-green-800 text-xs font-bold p-4 rounded-2xl border-2 border-green-300 flex flex-col items-center gap-2">
-              <CheckCircle2 className="w-8 h-8 text-green-600 stroke-[2.5]" />
-              <span>{successMessage}</span>
+          <div className="space-y-4">
+            <div className="p-4 bg-green-50 border-2 border-green-500 rounded-2xl flex flex-col items-center text-center gap-2">
+              <CheckCircle2 className="w-10 h-10 text-green-600 stroke-[2.5]" />
+              <p className="font-heading font-black text-base text-green-900">
+                Berhasil Diperbarui!
+              </p>
+              <p className="text-xs font-semibold text-green-800">
+                {successMessage}
+              </p>
             </div>
-
             <button
               onClick={() => {
                 onClose();
@@ -120,11 +115,12 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
               }}
               className="w-full neo-btn bg-[#B8FF00] hover:bg-[#a6e600] text-black font-heading font-black py-3.5 px-4 rounded-2xl border-2 border-black shadow-[3px_3px_0px_0px_#000] text-sm cursor-pointer transition-all flex items-center justify-center gap-2"
             >
-              <span>Masuk dengan Password Baru</span>
+              <span>Masuk Sekarang</span>
+              <Sparkles className="w-4 h-4" />
             </button>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-3.5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-black text-black mb-1">
                 Password Baru
@@ -137,7 +133,7 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
                   placeholder="Minimal 8 karakter"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-9 pr-9 py-2.5 bg-gray-50 border-2 border-black rounded-xl text-xs font-bold focus:outline-none focus:bg-white"
+                  className="w-full pl-9 pr-10 py-2.5 bg-gray-50 border-2 border-black rounded-xl text-xs font-bold focus:outline-none focus:bg-white"
                 />
                 <button
                   type="button"
@@ -147,33 +143,21 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-            </div>
 
-            {/* Password Strength Indicator */}
-            {password && (
-              <div className="space-y-1">
-                <div className="flex justify-between items-center text-[10px] font-black">
-                  <span>Kekuatan Password:</span>
-                  <span
-                    className={
-                      strength.percent === 100
-                        ? 'text-green-600'
-                        : strength.percent === 66
-                        ? 'text-yellow-600'
-                        : 'text-red-600'
-                    }
-                  >
-                    {strength.label}
-                  </span>
+              {password && (
+                <div className="mt-1.5 space-y-1">
+                  <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full ${strength.color} transition-all duration-300`}
+                      style={{ width: `${strength.percent}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] font-bold text-gray-600 text-right">
+                    Kekuatan: <span className="text-black">{strength.label}</span>
+                  </p>
                 </div>
-                <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden border border-black">
-                  <div
-                    className={`h-full ${strength.color} transition-all duration-300`}
-                    style={{ width: `${strength.percent}%` }}
-                  ></div>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
 
             <div>
               <label className="block text-xs font-black text-black mb-1">
@@ -187,7 +171,7 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
                   placeholder="Ulangi password baru"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full pl-9 pr-9 py-2.5 bg-gray-50 border-2 border-black rounded-xl text-xs font-bold focus:outline-none focus:bg-white"
+                  className="w-full pl-9 pr-10 py-2.5 bg-gray-50 border-2 border-black rounded-xl text-xs font-bold focus:outline-none focus:bg-white"
                 />
                 <button
                   type="button"
@@ -202,7 +186,7 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
             <button
               type="submit"
               disabled={loading}
-              className="w-full neo-btn bg-[#FFE600] text-black font-heading font-black py-3 px-4 rounded-2xl shadow-[3px_3px_0px_0px_#000] text-xs mt-2 border-2 border-black cursor-pointer flex items-center justify-center gap-2"
+              className="w-full neo-btn bg-[#B8FF00] hover:bg-[#a6e600] text-black font-heading font-black py-3 px-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_#000] text-sm cursor-pointer flex items-center justify-center gap-2 mt-2"
             >
               {loading && <RefreshCw className="w-4 h-4 animate-spin" />}
               <span>Simpan Kata Sandi Baru</span>
@@ -211,7 +195,7 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="w-full text-center text-xs font-black text-gray-600 hover:underline pt-1"
+              className="w-full text-center text-xs font-black text-gray-600 hover:text-black pt-1"
             >
               Batal
             </button>

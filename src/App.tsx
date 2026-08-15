@@ -5,7 +5,6 @@ import { Sidebar } from './components/layout/Sidebar';
 import { BottomNav } from './components/layout/BottomNav';
 import { RightSidebar } from './components/layout/RightSidebar';
 import { AuthModal } from './components/auth/AuthModal';
-import { CompleteProfileModal } from './components/auth/CompleteProfileModal';
 import { VerifyEmailModal } from './components/auth/VerifyEmailModal';
 import { ResetPasswordModal } from './components/auth/ResetPasswordModal';
 import { CreatePostModal } from './components/post/CreatePostModal';
@@ -23,7 +22,7 @@ import { AdminDashboardView } from './views/AdminDashboardView';
 import { ArticleDetailView } from './views/ArticleDetailView';
 
 const MainApp: React.FC = () => {
-  const { currentUser, needsUsernameSetup, authLoading } = useApp();
+  const { currentUser, authLoading } = useApp();
 
   const [currentView, setCurrentView] = useState<string>('home');
   const [selectedNewsId, setSelectedNewsId] = useState<string | null>(null);
@@ -35,20 +34,37 @@ const MainApp: React.FC = () => {
 
   // Email verification & Password reset states from URL
   const [verifyToken, setVerifyToken] = useState<string | null>(null);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
   const [resetToken, setResetToken] = useState<string | null>(null);
 
   useEffect(() => {
     try {
-      const params = new URLSearchParams(window.location.search);
-      const token = params.get('token');
+      const searchParams = new URLSearchParams(window.location.search);
+      const rawHash = window.location.hash.startsWith('#') ? window.location.hash.substring(1) : window.location.hash;
+      const hashParams = new URLSearchParams(rawHash);
       const pathname = window.location.pathname;
 
-      if (token) {
-        if (pathname.includes('reset-password') || params.get('action') === 'reset-password' || params.has('reset')) {
-          setResetToken(token);
-        } else if (pathname.includes('verify-email') || params.get('action') === 'verify-email' || params.has('verify') || !pathname.includes('reset')) {
-          setVerifyToken(token);
+      const token = searchParams.get('token') || hashParams.get('access_token') || hashParams.get('token') || searchParams.get('code');
+      const type = searchParams.get('type') || hashParams.get('type');
+      const errorCode = searchParams.get('error') || hashParams.get('error') || searchParams.get('error_code') || hashParams.get('error_code');
+      const errorDesc = searchParams.get('error_description') || hashParams.get('error_description');
+
+      if (errorCode || errorDesc) {
+        let msg = errorDesc ? decodeURIComponent(errorDesc.replace(/\+/g, ' ')) : 'Tautan verifikasi tidak valid atau telah kedaluwarsa.';
+        if (msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('expired')) {
+          msg = 'Link verifikasi email tidak valid atau telah kedaluwarsa. Silakan kirim ulang link verifikasi baru.';
         }
+        setVerifyError(msg);
+        setVerifyToken('error');
+        // Clean URL to prevent recurring alerts on reload
+        window.history.replaceState(null, '', window.location.pathname);
+        return;
+      }
+
+      if (type === 'recovery' || rawHash.includes('reset-password') || pathname.includes('reset-password') || searchParams.get('action') === 'reset-password') {
+        setResetToken(token || 'session');
+      } else if (type === 'signup' || type === 'email' || type === 'email_change' || rawHash.includes('verify-email') || pathname.includes('verify-email') || searchParams.get('action') === 'verify-email' || (token && !pathname.includes('reset'))) {
+        setVerifyToken(token || 'verified');
       }
     } catch (e) {
       console.warn('URL param parse error:', e);
@@ -215,14 +231,17 @@ const MainApp: React.FC = () => {
         />
 
       {/* Global Modals */}
-      {needsUsernameSetup && <CompleteProfileModal />}
-
       {verifyToken && (
         <VerifyEmailModal 
           token={verifyToken}
-          onClose={() => setVerifyToken(null)}
+          initialError={verifyError || undefined}
+          onClose={() => {
+            setVerifyToken(null);
+            setVerifyError(null);
+          }}
           onOpenLogin={() => {
             setVerifyToken(null);
+            setVerifyError(null);
             setIsAuthOpen(true);
           }}
         />

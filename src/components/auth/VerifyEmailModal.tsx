@@ -1,55 +1,105 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle2, AlertCircle, RefreshCw, Sparkles } from 'lucide-react';
-import { fetchApi, setAuthToken } from '../../lib/api';
+import { supabase } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
 
 interface VerifyEmailModalProps {
-  token: string;
+  token?: string;
+  initialError?: string;
   onClose: () => void;
   onOpenLogin: () => void;
 }
 
-export const VerifyEmailModal: React.FC<VerifyEmailModalProps> = ({ token, onClose, onOpenLogin }) => {
+export const VerifyEmailModal: React.FC<VerifyEmailModalProps> = ({ 
+  token, 
+  initialError, 
+  onClose, 
+  onOpenLogin 
+}) => {
   const { resendVerification } = useApp();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialError);
   const [success, setSuccess] = useState(false);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(initialError || '');
   const [emailInput, setEmailInput] = useState('');
-  const [showResendForm, setShowResendForm] = useState(false);
+  const [showResendForm, setShowResendForm] = useState(Boolean(initialError));
   const [resending, setResending] = useState(false);
   const [resendStatus, setResendStatus] = useState<{ success?: boolean; text?: string } | null>(null);
 
   useEffect(() => {
     let isMounted = true;
 
-    const verifyToken = async () => {
-      if (!token) {
-        setLoading(false);
-        setSuccess(false);
-        setMessage('Token verifikasi tidak ditemukan.');
-        return;
-      }
+    if (initialError) {
+      setLoading(false);
+      setSuccess(false);
+      setMessage(initialError);
+      setShowResendForm(true);
+      return;
+    }
 
+    const verifyToken = async () => {
+      // If token provided or Supabase magic link / hash exchange
       try {
-        const res = await fetchApi(`/api/auth/verify-email.php?token=${encodeURIComponent(token)}`);
+        const { data: userData } = await supabase.auth.getUser();
         if (!isMounted) return;
 
-        setLoading(false);
-        if (res.success) {
-          setSuccess(true);
-          setMessage(res.message || 'Email berhasil diverifikasi! Akun Anda kini aktif.');
-          if (res.token) {
-            setAuthToken(res.token);
+        if (userData?.user?.email_confirmed_at) {
+          // Update profile in DB if needed
+          try {
+            await supabase
+              .from('profiles')
+              .update({ email_verified: true, updated_at: new Date().toISOString() })
+              .eq('id', userData.user.id);
+          } catch {
+            // Ignore if RLS or offline
           }
+
+          setLoading(false);
+          setSuccess(true);
+          setMessage('Email berhasil diverifikasi! Akun Anda kini aktif di MKVERSE.');
+          return;
+        }
+
+        if (token && token !== 'verified' && token !== 'error') {
+          // Attempt OTP verification if token provided
+          const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+            token_hash: token,
+            type: 'email',
+          });
+
+          if (!verifyError && verifyData?.user) {
+            try {
+              await supabase
+                .from('profiles')
+                .update({ email_verified: true, updated_at: new Date().toISOString() })
+                .eq('id', verifyData.user.id);
+            } catch {
+              // Ignore
+            }
+
+            setLoading(false);
+            setSuccess(true);
+            setMessage('Email berhasil diverifikasi! Akun Anda kini aktif di MKVERSE.');
+          } else {
+            setLoading(false);
+            setSuccess(false);
+            setMessage(verifyError?.message || 'Token verifikasi tidak valid atau telah kedaluwarsa.');
+            setShowResendForm(true);
+          }
+        } else if (token === 'verified') {
+          setLoading(false);
+          setSuccess(true);
+          setMessage('Email berhasil diverifikasi! Akun Anda kini aktif di MKVERSE.');
         } else {
+          setLoading(false);
           setSuccess(false);
-          setMessage(res.message || 'Token verifikasi tidak valid atau telah kedaluwarsa.');
+          setMessage('Silakan klik tautan verifikasi yang telah dikirimkan ke email Anda.');
         }
       } catch (err: any) {
         if (!isMounted) return;
         setLoading(false);
         setSuccess(false);
         setMessage(err?.message || 'Terjadi kesalahan saat memverifikasi email.');
+        setShowResendForm(true);
       }
     };
 
@@ -57,7 +107,7 @@ export const VerifyEmailModal: React.FC<VerifyEmailModalProps> = ({ token, onClo
     return () => {
       isMounted = false;
     };
-  }, [token]);
+  }, [token, initialError]);
 
   const handleResend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,7 +141,7 @@ export const VerifyEmailModal: React.FC<VerifyEmailModalProps> = ({ token, onClo
           <div className="py-8 flex flex-col items-center justify-center space-y-4">
             <RefreshCw className="w-8 h-8 text-black animate-spin" />
             <p className="text-sm font-bold text-gray-700">
-              Memverifikasi token email Anda...
+              Memverifikasi status email Anda...
             </p>
           </div>
         ) : success ? (
@@ -122,7 +172,7 @@ export const VerifyEmailModal: React.FC<VerifyEmailModalProps> = ({ token, onClo
             <div className="p-4 bg-red-50 border-2 border-red-500 text-red-900 rounded-2xl flex flex-col items-center gap-2">
               <AlertCircle className="w-10 h-10 text-red-600 stroke-[2.5]" />
               <p className="font-heading font-black text-base text-red-900">
-                Verifikasi Gagal
+                Verifikasi Email
               </p>
               <p className="text-xs font-semibold text-red-800">
                 {message}

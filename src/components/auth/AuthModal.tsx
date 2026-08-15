@@ -17,8 +17,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onNavigat
     authIsSuspended,
     resendVerification, 
     verifyEmailStatus, 
-    sendResetPasswordEmail,
-    loginGoogle
+    sendResetPasswordEmail
   } = useApp();
 
   const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'verify' | 'suspended'>('login');
@@ -136,7 +135,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onNavigat
     }
 
     if (regPassword !== regConfirmPassword) {
-      setErrorMessage('Konfirmasi password tidak sama.');
+      setErrorMessage('Konfirmasi password tidak sama. Pastikan kedua kolom kata sandi cocok.');
       return;
     }
 
@@ -144,9 +143,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onNavigat
 
     try {
       const res = await register({
-        name: regName,
-        username: regUsername,
-        email: regEmail,
+        name: regName.trim(),
+        username: regUsername.trim().toLowerCase(),
+        email: regEmail.trim().toLowerCase(),
         password: regPassword,
         userType,
         kelas: userType === 'Siswa' ? kelas : undefined,
@@ -158,16 +157,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onNavigat
       setIsLoading(false);
 
       if (res.success) {
-        setSuccessMessage('Pendaftaran berhasil! Silakan cek email Anda untuk verifikasi.');
-        setMode('verify');
+        if (res.needsVerification) {
+          setSuccessMessage(res.message || 'Pendaftaran berhasil! Link verifikasi telah dikirim ke email Anda.');
+          setMode('verify');
+        } else {
+          setSuccessMessage('Pendaftaran berhasil! Selamat datang di MKVERSE.');
+          setTimeout(() => {
+            onClose();
+          }, 1200);
+        }
       } else {
-        setErrorMessage(res.message || 'Gagal mendaftar. Silakan coba lagi.');
+        setErrorMessage(res.message || 'Gagal mendaftar. Silakan periksa kembali data Anda.');
       }
     } catch (err: any) {
       setIsLoading(false);
-      console.error("REGISTER ERROR CODE:", err?.code);
-      console.error("REGISTER ERROR MESSAGE:", err?.message);
-      setErrorMessage(err?.message ? `Registrasi gagal: ${err.message}` : 'Terjadi kesalahan saat mendaftar.');
+      console.error("Registration error encountered:", err?.message || err);
+      setErrorMessage(err?.message ? `Registrasi gagal: ${err.message}` : 'Terjadi kesalahan sistem saat mendaftar.');
     }
   };
 
@@ -220,22 +225,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onNavigat
       setSuccessMessage(res.message);
     } else {
       setErrorMessage(res.message);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    setIsLoading(true);
-    setErrorMessage('');
-    const res = await loginGoogle(rememberMe);
-    setIsLoading(false);
-
-    if (res.success) {
-      onClose();
-    } else if ((res as any).cancelled) {
-      // User deliberately dismissed or cancelled the Google popup — reset cleanly
-      setErrorMessage('');
-    } else {
-      setErrorMessage(res.message || 'Gagal masuk dengan Google.');
     }
   };
 
@@ -352,22 +341,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onNavigat
             >
               {isLoading && <RefreshCw className="w-4 h-4 animate-spin" />}
               <span>Masuk ke Aplikasi</span>
-            </button>
-
-            {/* Google Sign In Button */}
-            <button
-              type="button"
-              onClick={handleGoogleLogin}
-              disabled={isLoading}
-              className="w-full neo-btn bg-white text-black font-bold py-2.5 px-4 rounded-2xl border-2 border-black flex items-center justify-center gap-2 text-xs shadow-[2px_2px_0px_0px_#000] cursor-pointer hover:bg-gray-50"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
-                <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.1 0-5.74-2.09-6.68-4.91H1.32v3.15C3.32 21.32 7.37 24 12 24z"/>
-                <path fill="#FBBC05" d="M5.32 14.29c-.24-.72-.38-1.49-.38-2.29s.14-1.57.38-2.29V6.56H1.32C.48 8.24 0 10.06 0 12s.48 3.76 1.32 5.44l4-3.15z"/>
-                <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.37 0 3.32 2.68 1.32 6.56l4 3.15c.94-2.82 3.58-4.96 6.68-4.96z"/>
-              </svg>
-              <span>Masuk dengan Google</span>
             </button>
 
             <p className="text-center text-xs text-gray-700 font-bold pt-2">
@@ -563,6 +536,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onNavigat
               </div>
             )}
 
+            {errorMessage && (
+              <div className="bg-red-50 text-red-700 text-xs font-bold p-3 rounded-xl border-2 border-red-200 flex items-center gap-2 mt-2">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={isLoading}
@@ -570,28 +550,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onNavigat
             >
               {isLoading && <RefreshCw className="w-4 h-4 animate-spin" />}
               <span>Daftar Akun MKVERSE</span>
-            </button>
-
-            <div className="flex items-center my-2">
-              <div className="flex-1 border-t-2 border-gray-200"></div>
-              <span className="px-3 text-[11px] font-extrabold text-gray-500 uppercase tracking-wider">atau</span>
-              <div className="flex-1 border-t-2 border-gray-200"></div>
-            </div>
-
-            {/* Google Sign In Option on Register */}
-            <button
-              type="button"
-              onClick={handleGoogleLogin}
-              disabled={isLoading}
-              className="w-full neo-btn bg-white text-black font-bold py-2.5 px-4 rounded-2xl border-2 border-black flex items-center justify-center gap-2 text-xs shadow-[2px_2px_0px_0px_#000] cursor-pointer hover:bg-gray-50"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
-                <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.1 0-5.74-2.09-6.68-4.91H1.32v3.15C3.32 21.32 7.37 24 12 24z"/>
-                <path fill="#FBBC05" d="M5.32 14.29c-.24-.72-.38-1.49-.38-2.29s.14-1.57.38-2.29V6.56H1.32C.48 8.24 0 10.06 0 12s.48 3.76 1.32 5.44l4-3.15z"/>
-                <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.37 0 3.32 2.68 1.32 6.56l4 3.15c.94-2.82 3.58-4.96 6.68-4.96z"/>
-              </svg>
-              <span>Lanjutkan dengan Google</span>
             </button>
 
             <p className="text-center text-xs text-gray-700 font-bold pt-1">

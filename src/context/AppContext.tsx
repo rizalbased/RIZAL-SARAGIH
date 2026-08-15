@@ -1,20 +1,24 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { fetchApi, setAuthToken, removeAuthToken } from '../lib/api';
-
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { 
-  UserProfile, UserRole, Post, Story, NewsArticle, DocumentationItem,
+  UserProfile, UserRole, UserType, Post, Story, NewsArticle, DocumentationItem,
   Song, RadioRequest, DriveFolder, DriveFile, Conversation, ChatMessage,
-  NotificationItem, ReportItem
+  NotificationItem, ReportItem 
 } from '../types';
 import { 
   INITIAL_USERS, INITIAL_POSTS, INITIAL_STORIES, INITIAL_NEWS, INITIAL_SONGS, 
   INITIAL_RADIO_REQUESTS, INITIAL_CONVERSATIONS, INITIAL_MESSAGES, 
   INITIAL_NOTIFICATIONS, INITIAL_REPORTS, INITIAL_DOC_FOLDERS, INITIAL_DOC_FILES 
 } from '../data/mockData';
-
-
-
-import { requestGoogleCredential } from '../lib/googleAuth';
+import { 
+  supabase, 
+  mapProfileRow, 
+  mapPostRow, 
+  signUpWithSupabase, 
+  signInWithSupabase, 
+  signOutSupabase, 
+  resetPasswordSupabase, 
+  updatePasswordSupabase 
+} from '../lib/supabase';
 
 export interface RegisterData {
   name: string;
@@ -67,18 +71,14 @@ export interface AppContextType {
   authLoading: boolean;
   authNeedsVerification: boolean;
   authIsSuspended: boolean;
-  needsUsernameSetup: boolean;
   mustChangeAdminPassword: boolean;
   login: (emailOrUsername: string, pass: string, rememberMe?: boolean) => Promise<{ success: boolean; message?: string; needsVerification?: boolean; isSuspended?: boolean }>;
   register: (userData: RegisterData) => Promise<{ success: boolean; message?: string }>;
   logout: () => Promise<void>;
   updateProfile: (updatedData: Partial<UserProfile>) => Promise<{ success: boolean; message?: string }>;
-  resendVerification: () => Promise<{ success: boolean; message: string }>;
+  resendVerification: (email?: string) => Promise<{ success: boolean; message: string }>;
   verifyEmailStatus: () => Promise<boolean>;
   sendResetPasswordEmail: (email: string) => Promise<{ success: boolean; message: string }>;
-  loginGoogle: (rememberMe?: boolean) => Promise<{ success: boolean; message?: string; needsUsernameSetup?: boolean }>;
-  loginGoogleWithCredential: (credential: string, rememberMe?: boolean) => Promise<{ success: boolean; message?: string; needsUsernameSetup?: boolean }>;
-  submitGoogleUsername: (username: string) => Promise<{ success: boolean; message?: string }>;
   submitAdminNewPassword: (newPassword: string) => Promise<{ success: boolean; message?: string }>;
 
   // Social & Posts
@@ -135,35 +135,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [users, setUsers] = useState<UserProfile[]>(() => {
     try {
-      const saved = localStorage.getItem('mkverse_users');
+      const saved = localStorage.getItem('mkverse_users_cache');
       return saved ? JSON.parse(saved) : INITIAL_USERS;
     } catch {
       return INITIAL_USERS;
     }
   });
+
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [authNeedsVerification, setAuthNeedsVerification] = useState<boolean>(false);
   const [authIsSuspended, setAuthIsSuspended] = useState<boolean>(false);
-  const [needsUsernameSetup, setNeedsUsernameSetup] = useState<boolean>(false);
   const [mustChangeAdminPassword, setMustChangeAdminPassword] = useState<boolean>(false);
 
   const [posts, setPosts] = useState<Post[]>(() => {
-    const saved = localStorage.getItem('mkverse_posts');
+    const saved = localStorage.getItem('mkverse_posts_cache');
     return saved ? JSON.parse(saved) : INITIAL_POSTS;
   });
 
   const [stories, setStories] = useState<Story[]>(() => {
-    const saved = localStorage.getItem('mkverse_stories');
+    const saved = localStorage.getItem('mkverse_stories_cache');
     return saved ? JSON.parse(saved) : INITIAL_STORIES;
   });
 
   const [news, setNews] = useState<NewsArticle[]>(() => {
-    const saved = localStorage.getItem('mkverse_news');
+    const saved = localStorage.getItem('mkverse_news_cache');
     return saved ? JSON.parse(saved) : INITIAL_NEWS;
   });
 
   const [documentations, setDocumentations] = useState<DocumentationItem[]>(() => {
-    const saved = localStorage.getItem('mkverse_documentations');
+    const saved = localStorage.getItem('mkverse_documentations_cache');
     return saved ? JSON.parse(saved) : [];
   });
 
@@ -173,18 +173,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isLiveRadio, setIsLiveRadio] = useState<boolean>(false);
   
   const [radioRequests, setRadioRequests] = useState<RadioRequest[]>(() => {
-    const saved = localStorage.getItem('mkverse_radio_requests');
+    const saved = localStorage.getItem('mkverse_radio_requests_cache');
     return saved ? JSON.parse(saved) : INITIAL_RADIO_REQUESTS;
   });
 
   const [folders, setFolders] = useState<DriveFolder[]>(INITIAL_DOC_FOLDERS);
   const [files, setFiles] = useState<DriveFile[]>(INITIAL_DOC_FILES);
 
-  const [conversations, setConversations] = useState<Conversation[]>(INITIAL_CONVERSATIONS);
-  const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
-  const [notifications, setNotifications] = useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
+  const [conversations, setConversations] = useState<Conversation[]>(() => {
+    const saved = localStorage.getItem('mkverse_conversations_cache');
+    return saved ? JSON.parse(saved) : INITIAL_CONVERSATIONS;
+  });
+
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const saved = localStorage.getItem('mkverse_messages_cache');
+    return saved ? JSON.parse(saved) : INITIAL_MESSAGES;
+  });
+
+  const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
+    const saved = localStorage.getItem('mkverse_notifications_cache');
+    return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
+  });
+
   const [reports, setReports] = useState<ReportItem[]>(() => {
-    const saved = localStorage.getItem('mkverse_reports');
+    const saved = localStorage.getItem('mkverse_reports_cache');
     return saved ? JSON.parse(saved) : INITIAL_REPORTS;
   });
 
@@ -192,255 +204,372 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
 
   // -------------------------------------------------------------
-  
-  // FETCH USERS FROM API / MYSQL
-  const fetchUsers = async () => {
+  // 1. FETCH USERS FROM SUPABASE
+  // -------------------------------------------------------------
+  const fetchUsers = useCallback(async () => {
     try {
-      const data = await fetchApi('/api/users/index.php');
-      if (data.success && Array.isArray(data.users)) {
-        setUsers(data.users);
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('Supabase fetch users notice:', error.message);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        const mappedUsers = data.map(mapProfileRow);
+        setUsers(mappedUsers);
+        localStorage.setItem('mkverse_users_cache', JSON.stringify(mappedUsers));
       }
     } catch (err) {
-      console.error('Fetch users failed', err);
+      console.warn('Fetch users fallback:', err);
     }
-  };
-
-  useEffect(() => {
-    fetchUsers();
   }, []);
 
-// API AUTH SESSION MONITORING
+  // -------------------------------------------------------------
+  // 2. FETCH POSTS FROM SUPABASE
+  // -------------------------------------------------------------
+  const fetchPosts = useCallback(async (currentUserId?: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('posts')
+        .select(`
+          *,
+          profiles (*),
+          likes (user_id),
+          comments (*)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('Supabase fetch posts notice:', error.message);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        const mappedPosts = data.map(row => mapPostRow(row, currentUserId));
+        setPosts(mappedPosts);
+        localStorage.setItem('mkverse_posts_cache', JSON.stringify(mappedPosts));
+      }
+    } catch (err) {
+      console.warn('Fetch posts fallback:', err);
+    }
+  }, []);
+
+  // -------------------------------------------------------------
+  // 3. FETCH STORIES FROM SUPABASE
+  // -------------------------------------------------------------
+  const fetchStories = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('stories')
+        .select(`
+          *,
+          profiles (*)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('Supabase fetch stories notice:', error.message);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        const mappedStories: Story[] = data.map(row => {
+          const author = row.profiles || {};
+          return {
+            id: row.id,
+            authorId: row.author_id,
+            authorName: author.full_name || 'Warga MKVERSE',
+            authorAvatar: author.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=250',
+            text: row.text || '',
+            mediaUrl: row.media_url,
+            bgGradient: row.bg_gradient || 'from-purple-500 to-pink-500',
+            createdAt: row.created_at ? new Date(row.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : 'Baru saja',
+            expiresAt: '24 jam lagi',
+            viewsCount: row.views_count || 0,
+          };
+        });
+        setStories(mappedStories);
+      }
+    } catch (err) {
+      console.warn('Fetch stories fallback:', err);
+    }
+  }, []);
+
+  // -------------------------------------------------------------
+  // 4. SUPABASE AUTH SESSION INITIALIZATION & LISTENER
+  // -------------------------------------------------------------
   useEffect(() => {
-    const checkAuth = async () => {
+    let isMounted = true;
+
+    async function initSession() {
+      setAuthLoading(true);
       try {
-        const data = await fetchApi('/api/auth/me.php');
-        if (data.success) {
-          setCurrentUser(data.user);
-        } else {
-          setCurrentUser(null);
+        const { data: { session }, error } = await supabase.auth.getSession();
+
+        if (error) {
+          console.warn('Get session error:', error.message);
+        }
+
+        if (session?.user && isMounted) {
+          // Fetch profile for user
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+
+          if (profile) {
+            const mapped = mapProfileRow(profile);
+            if (mapped.status === 'Suspended') {
+              setAuthIsSuspended(true);
+              setCurrentUser(null);
+            } else {
+              setCurrentUser(mapped);
+              setAuthNeedsVerification(!session.user.email_confirmed_at && !profile.email_verified);
+            }
+          } else {
+            // Profile row may not be created yet; build provisional profile from auth metadata
+            const meta = session.user.user_metadata || {};
+            const provisional: UserProfile = {
+              id: session.user.id,
+              name: meta.full_name || meta.name || session.user.email?.split('@')[0] || 'User',
+              username: meta.username || session.user.email?.split('@')[0] || 'user',
+              email: session.user.email || '',
+              avatar: meta.avatar_url || meta.picture || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=250',
+              bio: 'Warga SMK Multi Karya Medan',
+              userType: (meta.user_type as UserType) || 'Siswa',
+              role: 'USER',
+              status: 'Active',
+              createdAt: session.user.created_at || new Date().toISOString(),
+              emailVerified: Boolean(session.user.email_confirmed_at),
+              followersCount: 0,
+              followingCount: 0,
+              postsCount: 0,
+              storiesCount: 0,
+              musicRequestsCount: 0,
+            };
+            setCurrentUser(provisional);
+          }
         }
       } catch (err) {
-        console.error('Session check failed', err);
-        setCurrentUser(null);
+        console.warn('Session init fallback:', err);
       } finally {
-        setAuthLoading(false);
+        if (isMounted) setAuthLoading(false);
       }
-    };
-    checkAuth();
-  }, []);
-
-  // REALTIME FIRESTORE LISTENER FOR POSTS
-  // -------------------------------------------------------------
-  // Sync state to local storage for local components fallback
-  useEffect(() => {
-    if (users && users.length > 0) {
-      localStorage.setItem('mkverse_users', JSON.stringify(users));
-    }
-  }, [users]);
-
-  useEffect(() => {
-    localStorage.setItem('mkverse_posts', JSON.stringify(posts));
-  }, [posts]);
-
-  useEffect(() => {
-    localStorage.setItem('mkverse_stories', JSON.stringify(stories));
-  }, [stories]);
-
-  useEffect(() => {
-    localStorage.setItem('mkverse_news', JSON.stringify(news));
-  }, [news]);
-
-  useEffect(() => {
-    localStorage.setItem('mkverse_documentations', JSON.stringify(documentations));
-  }, [documentations]);
-
-  useEffect(() => {
-    localStorage.setItem('mkverse_radio_requests', JSON.stringify(radioRequests));
-  }, [radioRequests]);
-
-  useEffect(() => {
-    localStorage.setItem('mkverse_reports', JSON.stringify(reports));
-  }, [reports]);
-
-  // Drive Media refresh
-  const refreshDriveMedia = async () => {
-    try {
-      const flds = [] as any[];
-      const fls = [] as any[];
-      if (flds.length > 0) setFolders(flds);
-      if (fls.length > 0) setFiles(fls);
-    } catch {
-      // Keep local state
-    }
-  };
-
-  useEffect(() => {
-    refreshDriveMedia();
-  }, []);
-
-  // View Profile Handler
-  const viewProfile = (userId: string | null, onNavigate?: (view: string) => void) => {
-    setSelectedProfileId(userId);
-    if (onNavigate) {
-      onNavigate('profile');
-    }
-  };
-
-  // Follow Toggle Handler
-  const toggleFollowUser = async (targetUserId: string) => {
-    if (!currentUser) return;
-    const target = users.find(u => u.id === targetUserId);
-    const res = {success: true} as any; // await toggleFollowApi(currentUser.id, targetUserId, (target as any)?.isPrivate || false);
-    
-    if (res.success) {
-      // Firestore snapshot will auto-update state
-    }
-  };
-
-  const acceptFollowRequest = async (targetUid: string, followerUid: string): Promise<boolean> => {
-    return true;
-  };
-
-  const rejectFollowRequest = async (targetUid: string, followerUid: string): Promise<boolean> => {
-    return true;
-  };
-
-  const startChatWithUser = (targetUserId: string, onNavigate?: (view: string) => void): string => {
-    if (!targetUserId) return '';
-    const target = users.find(u => u.id === targetUserId || u.username === targetUserId);
-    if (!target) return '';
-
-    let existing = conversations.find(c => c.participant?.id === target.id);
-    let convId = existing?.id;
-
-    if (!existing) {
-      convId = `conv_${Date.now()}`;
-      const newConv: Conversation = {
-        id: convId,
-        participant: {
-          id: target.id,
-          name: target.name,
-          username: target.username,
-          avatar: target.avatar,
-          userType: target.userType
-        },
-        lastMessage: 'Halo! Mari mengobrol di MKVERSE.',
-        lastMessageTime: 'Baru saja',
-        unreadCount: 0
-      };
-      setConversations(prev => [newConv, ...prev]);
     }
 
-    setSelectedConversationId(convId!);
-    if (onNavigate) {
-      onNavigate('messages');
-    }
-    return convId!;
-  };
+    initSession();
+    fetchUsers();
+    fetchPosts();
+    fetchStories();
 
-  // AUTH HANDLERS
-  const login = async (emailOrUsername: string, pass: string, rememberMe: boolean = true) => {
-    const res = await fetchApi('/api/auth/login.php', {
-      method: 'POST',
-      body: JSON.stringify({ emailOrUsername, pass, rememberMe })
+    // Listen to Supabase auth state changes
+    const { data: authSubscription } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!isMounted) return;
+
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        if (session?.user) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+
+          if (profile) {
+            const mapped = mapProfileRow(profile);
+            if (mapped.status === 'Suspended') {
+              setAuthIsSuspended(true);
+              setCurrentUser(null);
+            } else {
+              setCurrentUser(mapped);
+              setAuthNeedsVerification(!session.user.email_confirmed_at && !profile.email_verified);
+            }
+          }
+          fetchPosts(session.user.id);
+        }
+      } else if (event === 'SIGNED_OUT') {
+        setCurrentUser(null);
+        setAuthNeedsVerification(false);
+        setAuthIsSuspended(false);
+      }
+      setAuthLoading(false);
     });
 
-    if (res.success && res.token && res.user) {
-      setAuthToken(res.token);
+    return () => {
+      isMounted = false;
+      authSubscription.subscription.unsubscribe();
+    };
+  }, [fetchUsers, fetchPosts, fetchStories]);
+
+  // -------------------------------------------------------------
+  // 5. AUTH HANDLERS
+  // -------------------------------------------------------------
+  const login = async (emailOrUsername: string, pass: string) => {
+    setAuthLoading(true);
+    const res = await signInWithSupabase(emailOrUsername, pass);
+    setAuthLoading(false);
+
+    if (res.success && res.user) {
       setCurrentUser(res.user);
       setAuthNeedsVerification(false);
       setAuthIsSuspended(false);
-      setMustChangeAdminPassword(false);
-      setNeedsUsernameSetup(res.needsUsernameSetup || false);
       fetchUsers();
+      fetchPosts(res.user.id);
     } else if (res.needsVerification) {
-      if (res.user) setCurrentUser(res.user);
       setAuthNeedsVerification(true);
-      fetchUsers();
     } else if (res.isSuspended) {
       setAuthIsSuspended(true);
     }
+
     return res;
   };
 
   const register = async (userData: RegisterData) => {
-    const res = await fetchApi('/api/auth/register.php', {
-      method: 'POST',
-      body: JSON.stringify(userData)
-    });
+    setAuthLoading(true);
+    try {
+      const res = await signUpWithSupabase({
+        email: userData.email,
+        password: userData.password || userData.pass,
+        username: userData.username,
+        fullName: userData.name,
+        userType: (userData.userType as UserType) || 'Siswa',
+        className: userData.kelas,
+        major: userData.jurusan,
+        mataPelajaran: userData.mataPelajaran,
+        divisi: userData.divisi,
+      });
 
-    if (res.success && res.user) {
-      setCurrentUser(res.user);
-      setAuthNeedsVerification(true);
-      fetchUsers();
+      if (res.success) {
+        if (res.user && res.session) {
+          // If auto-logged in (session available), fetch created profile
+          try {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', res.user.id)
+              .maybeSingle();
+
+            if (profile) {
+              setCurrentUser(mapProfileRow(profile));
+            } else {
+              // Temporary metadata profile representation until trigger finishes
+              const meta = res.user.user_metadata || {};
+              setCurrentUser({
+                id: res.user.id,
+                name: meta.full_name || userData.name,
+                username: meta.username || userData.username,
+                email: res.user.email || userData.email,
+                avatar: meta.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=250',
+                bio: 'Warga SMK Multi Karya Medan',
+                userType: (meta.user_type as UserType) || 'Siswa',
+                role: 'USER',
+                status: 'Active',
+                createdAt: new Date().toISOString(),
+                emailVerified: Boolean(res.user.email_confirmed_at),
+                followersCount: 0,
+                followingCount: 0,
+                postsCount: 0,
+                storiesCount: 0,
+                musicRequestsCount: 0,
+              });
+            }
+          } catch (profileErr) {
+            console.warn('Profile fetch after register warning:', profileErr);
+          }
+        }
+
+        if (res.needsVerification) {
+          setAuthNeedsVerification(true);
+        }
+
+        fetchUsers();
+      }
+
+      return res;
+    } catch (err: any) {
+      console.error('Registration error in AppContext:', err);
+      return {
+        success: false,
+        message: err?.message || 'Gagal memproses pendaftaran akun.',
+      };
+    } finally {
+      setAuthLoading(false);
     }
-    return res;
   };
 
   const logout = async () => {
-    try {
-      await fetchApi("/api/auth/logout.php", { method: "POST" });
-    } catch {
-      // Ignore network errors on logout
-    } finally {
-      removeAuthToken();
-      setCurrentUser(null);
-      setAuthNeedsVerification(false);
-      setAuthIsSuspended(false);
-      setNeedsUsernameSetup(false);
-      setMustChangeAdminPassword(false);
-      fetchUsers();
-    }
+    await signOutSupabase();
+    setCurrentUser(null);
+    setAuthNeedsVerification(false);
+    setAuthIsSuspended(false);
   };
 
   const updateProfile = async (updatedData: Partial<UserProfile>) => {
-    if (!currentUser) return { success: false, message: 'Belum login.' };
+    if (!currentUser) return { success: false, message: 'Tidak ada sesi login.' };
+
+    const updates: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (updatedData.name) updates.full_name = updatedData.name;
+    if (updatedData.username) updates.username = updatedData.username.toLowerCase().trim();
+    if (updatedData.bio !== undefined) updates.bio = updatedData.bio;
+    if (updatedData.avatar) updates.avatar_url = updatedData.avatar;
+    if (updatedData.coverImage) updates.cover_image = updatedData.coverImage;
+    if (updatedData.kelas) updates.class_name = updatedData.kelas;
+    if (updatedData.jurusan) updates.major = updatedData.jurusan;
+    if (updatedData.mataPelajaran) updates.mata_pelajaran = updatedData.mataPelajaran;
+    if (updatedData.divisi) updates.divisi = updatedData.divisi;
+    if (updatedData.socialLinks) updates.social_links = updatedData.socialLinks;
 
     try {
-      const res = await fetchApi('/api/auth/complete-profile.php', {
-        method: 'POST',
-        body: JSON.stringify(updatedData)
-      });
+      const { error } = await supabase
+        .from('profiles')
+        .update(updates)
+        .eq('id', currentUser.id);
 
-      if (res.success && res.user) {
-        setCurrentUser(res.user);
-        fetchUsers();
-        return { success: true, message: res.message };
+      if (error) {
+        console.warn('Update profile warning:', error.message);
       }
 
-      // Fallback local update
       setCurrentUser(prev => prev ? { ...prev, ...updatedData } : null);
-      fetchUsers();
-      return { success: true };
+      setUsers(prev => prev.map(u => u.id === currentUser.id ? { ...u, ...updatedData } : u));
+      return { success: true, message: 'Profil berhasil diperbarui.' };
     } catch (err: any) {
-      console.error('Update profile error:', err);
       return { success: false, message: err?.message || 'Gagal memperbarui profil.' };
     }
   };
 
   const resendVerification = async (email?: string) => {
     const targetEmail = email || currentUser?.email;
-    if (!targetEmail) {
-      return { success: false, message: 'Alamat email tidak ditemukan.' };
+    if (!targetEmail) return { success: false, message: 'Email tidak ditemukan.' };
+
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: targetEmail,
+      });
+
+      if (error) {
+        return { success: false, message: error.message };
+      }
+      return { success: true, message: 'Email verifikasi baru berhasil dikirimkan.' };
+    } catch (err: any) {
+      return { success: false, message: err?.message || 'Gagal mengirim email verifikasi.' };
     }
-
-    const res = await fetchApi('/api/auth/resend-verification.php', {
-      method: 'POST',
-      body: JSON.stringify({ email: targetEmail })
-    });
-
-    return {
-      success: res.success,
-      message: res.message || (res.success ? 'Email verifikasi telah dikirim.' : 'Gagal mengirim ulang email verifikasi.')
-    };
   };
 
   const verifyEmailStatus = async () => {
     try {
-      const res = await fetchApi('/api/auth/me.php');
-      if (res.success && res.user && res.user.emailVerified) {
-        setCurrentUser(res.user);
+      const { data } = await supabase.auth.getUser();
+      if (data?.user?.email_confirmed_at) {
         setAuthNeedsVerification(false);
+        if (currentUser) {
+          setCurrentUser(prev => prev ? { ...prev, emailVerified: true } : null);
+        }
         return true;
       }
       return false;
@@ -450,118 +579,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const sendResetPasswordEmail = async (email: string) => {
-    const res = await fetchApi('/api/auth/forgot-password.php', {
-      method: 'POST',
-      body: JSON.stringify({ email })
-    });
-
-    return {
-      success: res.success,
-      message: res.message || 'Jika email terdaftar, instruksi reset password telah dikirim.'
-    };
-  };
-
-  const loginGoogleWithCredential = async (credential: string, rememberMe: boolean = true) => {
-    try {
-      console.log('[MKVERSE Google Auth] Mengirim kredensial Google ke backend PHP...');
-      const res = await fetchApi('/api/auth/google.php', {
-        method: 'POST',
-        body: JSON.stringify({ credential, rememberMe })
-      });
-
-      console.log('[MKVERSE Google Auth] Respon API Backend:', res.success ? 'BERHASIL' : 'GAGAL', res.message);
-
-      if (res.success && res.token && res.user) {
-        setAuthToken(res.token);
-        setCurrentUser(res.user);
-        setAuthNeedsVerification(false);
-        setAuthIsSuspended(false);
-        if (res.needsUsernameSetup) {
-          setNeedsUsernameSetup(true);
-        } else {
-          setNeedsUsernameSetup(false);
-        }
-        fetchUsers();
-      }
-      return res;
-    } catch (err: any) {
-      console.error('[MKVERSE Google Auth API Error]:', err?.message || err);
-      return {
-        success: false,
-        message: err?.message || 'Gagal menghubungi server autentikasi API.'
-      };
-    }
-  };
-
-  const loginGoogle = async (rememberMe: boolean = true) => {
-    try {
-      console.log('[MKVERSE Google Auth] Memulai otentikasi Google Identity Services...');
-      const credential = await requestGoogleCredential();
-      return await loginGoogleWithCredential(credential, rememberMe);
-    } catch (err: any) {
-      const isCancelled =
-        err?.isCancelled ||
-        err?.name === 'GoogleAuthCancelledError' ||
-        (typeof err?.message === 'string' && (
-          err.message.toLowerCase().includes('membatalkan') ||
-          err.message.toLowerCase().includes('closed') ||
-          err.message.toLowerCase().includes('cancel')
-        ));
-
-      if (isCancelled) {
-        console.log('[MKVERSE Google Auth Info] Login dibatalkan oleh pengguna.');
-        return {
-          success: false,
-          cancelled: true,
-          message: 'Login Google dibatalkan.'
-        };
-      }
-
-      console.error('[MKVERSE Google Auth Error]:', err?.message || err);
-      return {
-        success: false,
-        message: err?.message || 'Gagal masuk dengan Google.'
-      };
-    }
-  };
-
-  const submitGoogleUsername = async (username: string) => {
-    if (!currentUser) return { success: false, message: 'User tidak aktif.' };
-    
-    const cleanU = username.toLowerCase().replace(/[^a-z0-9_.]/g, '').trim();
-    const res = await fetchApi('/api/auth/complete-profile.php', {
-      method: 'POST',
-      body: JSON.stringify({
-        username: cleanU,
-        userType: currentUser.userType || 'Siswa',
-        kelas: currentUser.kelas,
-        jurusan: currentUser.jurusan
-      })
-    });
-
-    if (res.success) {
-      if (res.token) setAuthToken(res.token);
-      if (res.user) {
-        setCurrentUser(res.user);
-      } else {
-        setCurrentUser(prev => prev ? { ...prev, username: cleanU, hasCompletedUsername: true } : null);
-      }
-      setNeedsUsernameSetup(false);
-      fetchUsers();
-    }
-    return res;
+    return await resetPasswordSupabase(email);
   };
 
   const submitAdminNewPassword = async (newPassword: string) => {
-    const res = { success: true };
+    const res = await updatePasswordSupabase(newPassword);
     if (res.success) {
       setMustChangeAdminPassword(false);
-      setCurrentUser(prev => prev ? { ...prev, mustChangePassword: false } : null);
     }
     return res;
   };
 
-  // POST HANDLERS
+  // -------------------------------------------------------------
+  // 6. SOCIAL, POSTS, & STORIES HANDLERS
+  // -------------------------------------------------------------
   const addPost = async (
     content: string, 
     mediaUrl?: string, 
@@ -570,9 +601,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     mediaType?: 'image' | 'video'
   ) => {
     if (!currentUser) return;
-    const postId = `pst_${Date.now()}`;
+    const tempId = `pst_${Date.now()}`;
     const newPost: Post = {
-      id: postId,
+      id: tempId,
       authorId: currentUser.id,
       authorName: isAnonymous ? 'Siswa Multi Karya (Anonim)' : currentUser.name,
       authorUsername: isAnonymous ? 'anonymous' : currentUser.username,
@@ -593,64 +624,95 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: 'Baru saja'
     };
 
+    // Optimistic UI update
+    setPosts(prev => [newPost, ...prev]);
+
     try {
-      
-      setPosts(prev => [newPost, ...prev]);
+      const { data, error } = await supabase
+        .from('posts')
+        .insert({
+          author_id: currentUser.id,
+          type: 'post',
+          content,
+          media_url: mediaUrl || null,
+          media_type: mediaType || null,
+          mood_tag: moodTag || null,
+          is_anonymous: isAnonymous,
+        })
+        .select(`*, profiles(*), likes(user_id), comments(*)`)
+        .single();
+
+      if (!error && data) {
+        const savedPost = mapPostRow(data, currentUser.id);
+        setPosts(prev => prev.map(p => p.id === tempId ? savedPost : p));
+      }
     } catch (err) {
-      console.error('Add post error:', err);
-      setPosts(prev => [newPost, ...prev]);
+      console.warn('Insert post fallback:', err);
     }
   };
 
   const deletePost = async (postId: string) => {
+    setPosts(prev => prev.filter(p => p.id !== postId));
     try {
-      
-      setPosts(prev => prev.filter(p => p.id !== postId));
+      await supabase.from('posts').delete().eq('id', postId);
     } catch (err) {
-      console.error('Delete post error:', err);
-      setPosts(prev => prev.filter(p => p.id !== postId));
+      console.warn('Delete post fallback:', err);
     }
   };
 
-  const toggleLikePost = (postId: string) => {
+  const toggleLikePost = async (postId: string) => {
     if (!currentUser) return;
+
+    let nextLiked = false;
     setPosts(prev => prev.map(p => {
       if (p.id === postId) {
-        const isLiked = !p.isLiked;
+        nextLiked = !p.isLiked;
         return {
           ...p,
-          isLiked,
-          likesCount: isLiked ? p.likesCount + 1 : Math.max(0, p.likesCount - 1)
+          isLiked: nextLiked,
+          likesCount: nextLiked ? p.likesCount + 1 : Math.max(0, p.likesCount - 1)
         };
       }
       return p;
     }));
+
+    try {
+      if (nextLiked) {
+        await supabase.from('likes').insert({ post_id: postId, user_id: currentUser.id });
+      } else {
+        await supabase.from('likes').delete().eq('post_id', postId).eq('user_id', currentUser.id);
+      }
+    } catch (err) {
+      console.warn('Toggle like fallback:', err);
+    }
   };
 
   const toggleSavePost = (postId: string) => {
     if (!currentUser) return;
-    setPosts(prev => prev.map(p => {
-      if (p.id === postId) {
-        return { ...p, isSaved: !p.isSaved };
-      }
-      return p;
-    }));
+    setPosts(prev => prev.map(p => p.id === postId ? { ...p, isSaved: !p.isSaved } : p));
   };
 
-  const addComment = (postId: string, commentText: string) => {
+  const addComment = async (postId: string, commentText: string) => {
     if (!currentUser || !commentText.trim()) return;
-    setPosts(prev => prev.map(p => {
-      if (p.id === postId) {
-        return { ...p, commentsCount: p.commentsCount + 1 };
-      }
-      return p;
-    }));
+
+    setPosts(prev => prev.map(p => p.id === postId ? { ...p, commentsCount: p.commentsCount + 1 } : p));
+
+    try {
+      await supabase.from('comments').insert({
+        post_id: postId,
+        author_id: currentUser.id,
+        content: commentText.trim(),
+      });
+    } catch (err) {
+      console.warn('Add comment fallback:', err);
+    }
   };
 
-  const addStory = (text: string, mediaUrl?: string, bgGradient = 'from-purple-500 to-pink-500') => {
+  const addStory = async (text: string, mediaUrl?: string, bgGradient = 'from-purple-500 to-pink-500') => {
     if (!currentUser) return;
+    const tempId = `str_${Date.now()}`;
     const newStory: Story = {
-      id: `str_${Date.now()}`,
+      id: tempId,
       authorId: currentUser.id,
       authorName: currentUser.name,
       authorAvatar: currentUser.avatar,
@@ -663,17 +725,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setStories(prev => [newStory, ...prev]);
+
+    try {
+      const { data, error } = await supabase
+        .from('stories')
+        .insert({
+          author_id: currentUser.id,
+          text,
+          media_url: mediaUrl || null,
+          bg_gradient: bgGradient,
+        })
+        .select(`*, profiles(*)`)
+        .single();
+
+      if (!error && data) {
+        const author = data.profiles || {};
+        setStories(prev => prev.map(s => s.id === tempId ? {
+          ...s,
+          id: data.id,
+          authorName: author.full_name || currentUser.name,
+          authorAvatar: author.avatar_url || currentUser.avatar,
+        } : s));
+      }
+    } catch (err) {
+      console.warn('Insert story fallback:', err);
+    }
   };
 
-  const deleteStory = (storyId: string) => {
+  const deleteStory = async (storyId: string) => {
     setStories(prev => prev.filter(s => s.id !== storyId));
+    try {
+      await supabase.from('stories').delete().eq('id', storyId);
+    } catch (err) {
+      console.warn('Delete story fallback:', err);
+    }
   };
 
   const addConfession = async (content: string, isAnonymous: boolean) => {
     if (!currentUser) return;
-    const postId = `cnf_${Date.now()}`;
+    const tempId = `cnf_${Date.now()}`;
     const newPost: Post = {
-      id: postId,
+      id: tempId,
       authorId: currentUser.id,
       authorName: isAnonymous ? 'Warga Multi Karya' : currentUser.name,
       authorUsername: isAnonymous ? 'anonymous' : currentUser.username,
@@ -690,11 +782,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: 'Baru saja'
     };
 
+    setPosts(prev => [newPost, ...prev]);
+
     try {
-      
-      setPosts(prev => [newPost, ...prev]);
-    } catch {
-      setPosts(prev => [newPost, ...prev]);
+      const { data, error } = await supabase
+        .from('posts')
+        .insert({
+          author_id: currentUser.id,
+          type: 'confession',
+          content,
+          is_anonymous: isAnonymous,
+        })
+        .select(`*, profiles(*)`)
+        .single();
+
+      if (!error && data) {
+        setPosts(prev => prev.map(p => p.id === tempId ? mapPostRow(data, currentUser.id) : p));
+      }
+    } catch (err) {
+      console.warn('Insert confession fallback:', err);
     }
   };
 
@@ -705,9 +811,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     isAnonymous = false
   ) => {
     if (!currentUser) return;
-    const postId = `mnf_${Date.now()}`;
+    const tempId = `mnf_${Date.now()}`;
     const newPost: Post = {
-      id: postId,
+      id: tempId,
       authorId: currentUser.id,
       authorName: isAnonymous ? 'Secret Admirer' : currentUser.name,
       authorUsername: isAnonymous ? 'anonymous' : currentUser.username,
@@ -730,15 +836,97 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: 'Baru saja'
     };
 
+    setPosts(prev => [newPost, ...prev]);
+
     try {
-      
-      setPosts(prev => [newPost, ...prev]);
-    } catch {
-      setPosts(prev => [newPost, ...prev]);
+      const { data, error } = await supabase
+        .from('posts')
+        .insert({
+          author_id: currentUser.id,
+          type: 'menfess_lagu',
+          content: message,
+          is_anonymous: isAnonymous,
+          song_data: {
+            title: song.title,
+            artist: song.artist,
+            cover: song.cover,
+            dedicatedTo
+          }
+        })
+        .select(`*, profiles(*)`)
+        .single();
+
+      if (!error && data) {
+        setPosts(prev => prev.map(p => p.id === tempId ? mapPostRow(data, currentUser.id) : p));
+      }
+    } catch (err) {
+      console.warn('Insert menfess fallback:', err);
     }
   };
 
-  // MUSIC & RADIO
+  // -------------------------------------------------------------
+  // 7. USER PROFILE & SOCIAL NAVIGATION
+  // -------------------------------------------------------------
+  const viewProfile = (userId: string | null, onNavigate?: (view: string) => void) => {
+    setSelectedProfileId(userId);
+    if (onNavigate) {
+      onNavigate('profile');
+    }
+  };
+
+  const toggleFollowUser = async (targetUserId: string) => {
+    if (!currentUser || currentUser.id === targetUserId) return;
+    setUsers(prev => prev.map(u => {
+      if (u.id === targetUserId) {
+        const isFollowed = (u as any).isFollowing;
+        return {
+          ...u,
+          isFollowing: !isFollowed,
+          followersCount: isFollowed ? Math.max(0, u.followersCount - 1) : u.followersCount + 1
+        };
+      }
+      return u;
+    }));
+  };
+
+  const acceptFollowRequest = async (_targetUid: string, _followerUid: string) => true;
+  const rejectFollowRequest = async (_targetUid: string, _followerUid: string) => true;
+
+  const startChatWithUser = (userId: string, onNavigate?: (view: string) => void) => {
+    const targetUser = users.find(u => u.id === userId);
+    if (!targetUser) return '';
+
+    let existingConv = conversations.find(c => c.participant.id === userId);
+    let convId = existingConv?.id;
+
+    if (!existingConv) {
+      convId = `conv_${Date.now()}`;
+      const newConv: Conversation = {
+        id: convId,
+        participant: {
+          id: targetUser.id,
+          name: targetUser.name,
+          username: targetUser.username,
+          avatar: targetUser.avatar,
+          userType: targetUser.userType
+        },
+        lastMessage: 'Memulai percakapan',
+        lastMessageTime: 'Baru saja',
+        unreadCount: 0
+      };
+      setConversations(prev => [newConv, ...prev]);
+    }
+
+    setSelectedConversationId(convId!);
+    if (onNavigate) {
+      onNavigate('messages');
+    }
+    return convId!;
+  };
+
+  // -------------------------------------------------------------
+  // 8. MUSIC & RADIO
+  // -------------------------------------------------------------
   const playSong = (song: Song) => {
     setCurrentSong(song);
     setIsPlaying(true);
@@ -752,14 +940,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const toggleLiveRadio = () => {
     setIsLiveRadio(prev => {
       const nextState = !prev;
-      if (nextState) {
-        setIsPlaying(true);
-      }
+      if (nextState) setIsPlaying(true);
       return nextState;
     });
   };
 
-  const submitRadioRequest = (songTitle: string, artist: string, message: string) => {
+  const submitRadioRequest = async (songTitle: string, artist: string, message: string) => {
     if (!currentUser) return;
     const newReq: RadioRequest = {
       id: `req_${Date.now()}`,
@@ -773,25 +959,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setRadioRequests(prev => [newReq, ...prev]);
+
+    try {
+      await supabase.from('radio_requests').insert({
+        sender_id: currentUser.id,
+        sender_name: `${currentUser.name} (${currentUser.kelas || currentUser.userType})`,
+        sender_username: currentUser.username,
+        song_title: songTitle,
+        artist,
+        message,
+        status: 'Pending',
+      });
+    } catch (err) {
+      console.warn('Radio request fallback:', err);
+    }
   };
 
-  const approveRadioRequest = (id: string) => {
+  const approveRadioRequest = async (id: string) => {
     setRadioRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'Approved' } : r));
+    try {
+      await supabase.from('radio_requests').update({ status: 'Approved' }).eq('id', id);
+    } catch (err) {
+      console.warn('Approve radio fallback:', err);
+    }
   };
 
-  // NEWS HANDLERS
+  // -------------------------------------------------------------
+  // 9. NEWS & DOCUMENTATION
+  // -------------------------------------------------------------
   const addNews = (newsData: Omit<NewsArticle, 'id' | 'publishedAt'>) => {
     if (!currentUser || (currentUser.role !== 'ADMIN' && currentUser.role !== 'SUPER_ADMIN')) {
       alert('Hanya Admin yang dapat menerbitkan berita sekolah.');
       return;
     }
-
     const newArticle: NewsArticle = {
       ...newsData,
       id: `news_${Date.now()}`,
       publishedAt: new Date().toISOString().split('T')[0]
     };
-
     setNews(prev => [newArticle, ...prev]);
   };
 
@@ -803,19 +1008,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setNews(prev => prev.filter(n => n.id !== id));
   };
 
-  // DOCUMENTATION HANDLERS
   const addDocumentation = (docData: Omit<DocumentationItem, 'id' | 'createdAt'>) => {
     if (!currentUser || (currentUser.role !== 'ADMIN' && currentUser.role !== 'SUPER_ADMIN')) {
-      alert('Hanya Admin yang dapat menambahkan dokumentasi sekolah.');
+      alert('Hanya Admin yang dapat menambahkan dokumentasi.');
       return;
     }
-
     const newDoc: DocumentationItem = {
       ...docData,
       id: `doc_${Date.now()}`,
       createdAt: new Date().toISOString().split('T')[0]
     };
-
     setDocumentations(prev => [newDoc, ...prev]);
   };
 
@@ -827,7 +1029,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDocumentations(prev => prev.filter(d => d.id !== id));
   };
 
-  // CHAT HANDLERS
+  const refreshDriveMedia = async () => {
+    // Refresh Drive metadata
+  };
+
+  // -------------------------------------------------------------
+  // 10. CHAT & MESSAGING
+  // -------------------------------------------------------------
   const sendChatMessage = (conversationId: string, text: string) => {
     if (!currentUser || !text.trim()) return;
     const newMsg: ChatMessage = {
@@ -839,22 +1047,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setMessages(prev => [...prev, newMsg]);
-
-    setConversations(prev => prev.map(c => {
-      if (c.id === conversationId) {
-        return {
-          ...c,
-          lastMessage: text,
-          lastMessageTime: 'Baru saja'
-        };
-      }
-      return c;
-    }));
+    setConversations(prev => prev.map(c => c.id === conversationId ? { ...c, lastMessage: text, lastMessageTime: 'Baru saja' } : c));
   };
 
   const sendDirectShareMessage = (recipientUserId: string, messageText: string) => {
     if (!currentUser || !recipientUserId) return;
-
     const recipient = users.find(u => u.id === recipientUserId);
     if (!recipient) return;
 
@@ -886,8 +1083,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
   };
 
-  // MODERATION & ADMIN
-  const reportContent = (
+  // -------------------------------------------------------------
+  // 11. MODERATION & ADMIN MANAGEMENT (SUPABASE POWERED)
+  // -------------------------------------------------------------
+  const reportContent = async (
     targetType: 'post' | 'confession' | 'user' | 'comment', 
     targetId: string, 
     contentPreview: string, 
@@ -907,42 +1106,73 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setReports(prev => [newReport, ...prev]);
+
+    try {
+      await supabase.from('reports').insert({
+        reporter_id: currentUser.id,
+        target_type: targetType,
+        target_id: targetId,
+        content_preview: contentPreview,
+        reason,
+        status: 'Pending',
+      });
+    } catch (err) {
+      console.warn('Report content fallback:', err);
+    }
   };
 
-  const resolveReport = (reportId: string, status: 'Resolved' | 'Dismissed') => {
+  const resolveReport = async (reportId: string, status: 'Resolved' | 'Dismissed') => {
     setReports(prev => prev.map(r => r.id === reportId ? { ...r, status: status === 'Resolved' ? 'Resolved' : 'Rejected' } : r));
+    try {
+      await supabase.from('reports').update({ status: status === 'Resolved' ? 'Resolved' : 'Rejected' }).eq('id', reportId);
+    } catch (err) {
+      console.warn('Resolve report fallback:', err);
+    }
   };
 
-  const updateReportStatus = (reportId: string, status: 'Pending' | 'Reviewed' | 'Resolved' | 'Rejected') => {
+  const updateReportStatus = async (reportId: string, status: 'Pending' | 'Reviewed' | 'Resolved' | 'Rejected') => {
     setReports(prev => prev.map(r => r.id === reportId ? { ...r, status } : r));
+    try {
+      await supabase.from('reports').update({ status }).eq('id', reportId);
+    } catch (err) {
+      console.warn('Update report status fallback:', err);
+    }
   };
 
   const updateUserRole = async (userId: string, newRole: UserRole) => {
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
+    if (currentUser?.id === userId) {
+      setCurrentUser(prev => prev ? { ...prev, role: newRole } : null);
+    }
+
     try {
-      
-      
-      setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
+      await supabase.from('profiles').update({ role: newRole, updated_at: new Date().toISOString() }).eq('id', userId);
     } catch (err) {
       console.error('Update user role error:', err);
     }
   };
 
   const updateUserStatus = async (userId: string, newStatus: 'Active' | 'Suspended') => {
-    const success = true; // await adminUpdateUserStatusApi(userId, newStatus === 'Suspended' ? 'suspended' : 'active');
-    if (success) {
-      setUsers(prev => prev.map(u => u.id === userId ? { ...u, status: newStatus } : u));
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, status: newStatus } : u));
+    try {
+      await supabase.from('profiles').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', userId);
+    } catch (err) {
+      console.error('Update user status error:', err);
     }
   };
 
   const deleteUser = async (userId: string) => {
-    const success = true; // await adminDeleteUserApi(userId);
-    if (success) {
-      setUsers(prev => prev.filter(u => u.id !== userId));
-      setPosts(prev => prev.filter(p => p.authorId !== userId));
-      setStories(prev => prev.filter(s => s.authorId !== userId));
-      if (currentUser && currentUser.id === userId) {
-        setCurrentUser(null);
-      }
+    setUsers(prev => prev.filter(u => u.id !== userId));
+    setPosts(prev => prev.filter(p => p.authorId !== userId));
+    setStories(prev => prev.filter(s => s.authorId !== userId));
+    if (currentUser && currentUser.id === userId) {
+      setCurrentUser(null);
+    }
+
+    try {
+      await supabase.from('profiles').delete().eq('id', userId);
+    } catch (err) {
+      console.error('Delete user error:', err);
     }
   };
 
@@ -1016,7 +1246,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         authLoading,
         authNeedsVerification,
         authIsSuspended,
-        needsUsernameSetup,
         mustChangeAdminPassword,
         login,
         register,
@@ -1025,9 +1254,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resendVerification,
         verifyEmailStatus,
         sendResetPasswordEmail,
-        loginGoogle,
-        loginGoogleWithCredential,
-        submitGoogleUsername,
         submitAdminNewPassword,
 
         addPost,
